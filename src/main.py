@@ -4,7 +4,7 @@ import sys
 from datetime import datetime
 
 from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS
-from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history
+from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history, get_average_price
 from scraper import scrape_flights, classify_flight
 from notifier import send_line_notification, send_line_flex, build_flex_message, format_combined_message
 from exporter import export_flights_to_csv
@@ -73,6 +73,7 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
     lowest_ever = get_lowest_ever_price(db_path, route, date)
     scrape_count = get_scrape_count(db_path, route, date)
     price_history = get_price_history(db_path, route, date, limit=10)
+    avg_price = get_average_price(db_path, route, date)
 
     direct_prices = [f['price_thb'] for f in flights if f['is_direct'] and not f['is_excluded_airline'] and f['price_thb'] > 0]
     current_best = min(direct_prices) if direct_prices else None
@@ -91,7 +92,8 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
     return {
         'route': route, 'search_date': date, 'date_label': date_label,
         'flights': flights, 'prev_best': prev_best, 'lowest_ever': lowest_ever,
-        'scrape_count': scrape_count, 'price_history': price_history, 'success': True,
+        'scrape_count': scrape_count, 'price_history': price_history,
+        'avg_price': avg_price, 'success': True,
     }
 
 

@@ -86,20 +86,46 @@ def insert_flight(db_path, scrape_run_id, airline, flight_number,
 
 
 def get_previous_best_price(db_path, route, search_date):
+    """Get best price from the second most recent scrape run (not current)."""
     conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    # Get the second most recent run ID
+    rows = conn.execute("""
+        SELECT id FROM scrape_runs
+        WHERE route = ? AND search_date = ? AND status = 'success'
+        ORDER BY scraped_at DESC
+        LIMIT 2
+    """, (route, search_date)).fetchall()
+    if len(rows) < 2:
+        conn.close()
+        return None
+    prev_run_id = rows[1][0]
     row = conn.execute("""
-        SELECT MIN(f.price_thb) as best_price
-        FROM flights f
-        JOIN scrape_runs sr ON f.scrape_run_id = sr.id
-        WHERE sr.route = ? AND sr.search_date = ? AND sr.status = 'success'
-          AND f.is_direct = 1 AND f.is_excluded_airline = 0
-        ORDER BY sr.scraped_at DESC
-        LIMIT 1
+        SELECT MIN(price_thb) as best_price
+        FROM flights
+        WHERE scrape_run_id = ? AND is_direct = 1 AND is_excluded_airline = 0
+    """, (prev_run_id,)).fetchone()
+    conn.close()
+    if row and row[0] is not None:
+        return row[0]
+    return None
+
+
+def get_average_price(db_path, route, search_date):
+    """Get average of historical best prices (direct, non-excluded)."""
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("""
+        SELECT AVG(best_price) FROM (
+            SELECT MIN(f.price_thb) as best_price
+            FROM flights f
+            JOIN scrape_runs sr ON f.scrape_run_id = sr.id
+            WHERE sr.route = ? AND sr.search_date = ? AND sr.status = 'success'
+              AND f.is_direct = 1 AND f.is_excluded_airline = 0
+            GROUP BY sr.id
+        )
     """, (route, search_date)).fetchone()
     conn.close()
-    if row and row['best_price'] is not None:
-        return row['best_price']
+    if row and row[0] is not None:
+        return int(row[0])
     return None
 
 
