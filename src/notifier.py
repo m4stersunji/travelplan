@@ -86,29 +86,27 @@ def build_flex_message(route_results, top_n=5):
     """Build a LINE Flex Message carousel with flight data.
 
     Returns a Flex carousel container dict.
+    Card order: Summary (with buy advice) → Outbound routes → Return routes
     """
     bubbles = []
 
-    # Group by direction
     outbound = [r for r in route_results if r['route'].startswith('BKK')]
     inbound = [r for r in route_results if r['route'].startswith('DAD')]
 
-    # Build outbound bubbles
-    for r in outbound:
-        bubble = _build_route_bubble(r, "OUTBOUND", "#1DB446", top_n)
-        if bubble:
-            bubbles.append(bubble)
-
-    # Build inbound bubbles
-    for r in inbound:
-        bubble = _build_route_bubble(r, "RETURN", "#0367D3", top_n)
-        if bubble:
-            bubbles.append(bubble)
-
-    # Build summary bubble
+    # Summary + buy recommendation FIRST
     summary = _build_summary_bubble(outbound, inbound, route_results)
     if summary:
         bubbles.append(summary)
+
+    # Route bubbles
+    for r in outbound:
+        bubble = _build_route_bubble(r, "GO", "#1DB446", top_n)
+        if bubble:
+            bubbles.append(bubble)
+    for r in inbound:
+        bubble = _build_route_bubble(r, "BACK", "#0367D3", top_n)
+        if bubble:
+            bubbles.append(bubble)
 
     return {"type": "carousel", "contents": bubbles}
 
@@ -149,6 +147,11 @@ def _build_route_bubble(route_data, direction, color, top_n):
             price_line = price
             price_color = "#999999" if f.get('is_excluded_airline') else "#111111"
 
+        # Score
+        total_score = f.get('total_score', 0)
+        score_color = "#1DB446" if total_score >= 15 else "#FF8C00" if total_score >= 10 else "#999999"
+        score_str = f"★{total_score}" if total_score else ""
+
         flight_rows.append({
             "type": "box", "layout": "vertical", "spacing": "xs",
             "paddingBottom": "md",
@@ -158,10 +161,13 @@ def _build_route_bubble(route_data, direction, color, top_n):
                     "contents": [
                         {"type": "text", "text": price_line, "size": "md", "weight": "bold",
                          "color": price_color, "flex": 5},
-                        {"type": "text", "text": f"{airline}{excluded}",
-                         "size": "xs", "color": "#666666", "flex": 4, "align": "end"},
+                        {"type": "text", "text": score_str, "size": "sm", "weight": "bold",
+                         "color": score_color, "flex": 1, "align": "end"},
                     ]
                 },
+                {
+                    "type": "text", "text": f"{airline}{excluded}",
+                    "size": "xs", "color": "#666666"},
                 {
                     "type": "box", "layout": "horizontal",
                     "contents": [
@@ -203,38 +209,88 @@ def _build_route_bubble(route_data, direction, color, top_n):
 
 
 def _build_summary_bubble(outbound, inbound, all_results):
-    """Build a summary bubble with best combos and history."""
+    """Build summary bubble: buy advice + best combo + best scored flights."""
+    from sheets_exporter import _best_price as sheets_best_price, _eligible
+
     contents = []
 
-    # Best roundtrip combos
+    # --- BEST ROUNDTRIP ---
     combos = _find_best_combos(outbound, inbound)
     if combos:
-        contents.append({"type": "text", "text": "BEST ROUNDTRIP", "size": "xs",
-                         "weight": "bold", "color": "#1DB446"})
-        for combo in combos[:3]:
-            contents.append({
-                "type": "text", "size": "sm", "weight": "bold",
-                "text": f"฿{combo['total']:,}",
-            })
-            contents.append({
-                "type": "text", "size": "xxs", "color": "#999999",
-                "text": f"  {combo['out_date']} ฿{combo['out_price']:,} + {combo['in_date']} ฿{combo['in_price']:,}",
-            })
+        best = combos[0]
+        contents.append({"type": "text", "text": "BEST ROUNDTRIP", "size": "xxs",
+                         "weight": "bold", "color": "#AAAAAA"})
+        contents.append({"type": "text", "text": f"฿{best['total']:,}",
+                         "size": "xxl", "weight": "bold", "color": "#1DB446"})
+        contents.append({"type": "text", "text": f"{best['out_date']} ฿{best['out_price']:,} + {best['in_date']} ฿{best['in_price']:,}",
+                         "size": "xxs", "color": "#999999"})
         contents.append({"type": "separator", "margin": "md"})
 
-    # History
-    contents.append({"type": "text", "text": "HISTORY", "size": "xs",
-                     "weight": "bold", "color": "#0367D3", "margin": "md"})
+    # --- SHOULD YOU BUY? ---
+    contents.append({"type": "text", "text": "SHOULD YOU BUY?", "size": "xs",
+                     "weight": "bold", "color": "#FF6B35", "margin": "md"})
+
     for r in all_results:
-        if r['lowest_ever'] is not None:
-            trend = _get_trend(r.get('price_history', []))
-            trend_text = f" {trend}" if trend else ""
+        direct = _eligible(r.get('flights', []))
+        if not direct:
+            continue
+        c = min(direct, key=lambda f: f['price_thb'])
+        current = sheets_best_price(c)
+        avg = r.get('avg_price')
+        lowest = r.get('lowest_ever')
+        trend = _get_trend(r.get('price_history', []))
+        days = _days_until(r.get('search_date', ''))
+        verdict = _compute_verdict(current, avg, lowest, trend, days, r.get('scrape_count', 0))
+
+        contents.append({
+            "type": "box", "layout": "horizontal", "margin": "sm",
+            "contents": [
+                {"type": "text", "text": f"{r['date_label']}", "size": "xs",
+                 "color": "#555555", "flex": 2},
+                {"type": "text", "text": verdict, "size": "xxs",
+                 "color": "#333333", "flex": 5, "wrap": True},
+            ]
+        })
+
+    contents.append({"type": "separator", "margin": "md"})
+
+    # --- TOP PICK (best scored flight per direction) ---
+    contents.append({"type": "text", "text": "TOP PICKS (by score)", "size": "xs",
+                     "weight": "bold", "color": "#0367D3", "margin": "md"})
+
+    for direction, routes in [("GO", outbound), ("BACK", inbound)]:
+        for r in routes:
+            scored = [f for f in r.get('flights', []) if f.get('total_score')]
+            if not scored:
+                continue
+            best = max(scored, key=lambda f: f['total_score'])
+            bp = best.get('best_booking_price')
+            price = bp if bp and bp < best['price_thb'] else best['price_thb']
+            src = best.get('best_booking_source', '')
+            dep = best.get('departure_time', '?')
+            arr = best.get('arrival_time', '?')
+            score = best.get('total_score', 0)
+
+            price_text = f"฿{price:,}"
+            if src:
+                price_text += f" ({src})"
+
             contents.append({
-                "type": "text", "size": "xxs", "color": "#666666",
-                "text": f"{r['date_label']}: lowest ฿{r['lowest_ever']:,}{trend_text} ({r['scrape_count']} checks)",
+                "type": "box", "layout": "vertical", "margin": "sm",
+                "contents": [
+                    {"type": "box", "layout": "horizontal", "contents": [
+                        {"type": "text", "text": f"{direction} {r['date_label']}", "size": "xxs", "color": "#AAAAAA", "flex": 3},
+                        {"type": "text", "text": f"★{score}/20", "size": "xxs", "weight": "bold",
+                         "color": "#1DB446" if score >= 15 else "#FF8C00", "flex": 2, "align": "end"},
+                    ]},
+                    {"type": "text", "text": f"{price_text} {best['airline'][:18]}",
+                     "size": "xs", "weight": "bold", "color": "#111111"},
+                    {"type": "text", "text": f"{dep}→{arr}",
+                     "size": "xxs", "color": "#999999"},
+                ]
             })
 
-    # Timestamp
+    # --- TIMESTAMP ---
     contents.append({"type": "separator", "margin": "md"})
     contents.append({
         "type": "text", "size": "xxs", "color": "#AAAAAA", "margin": "md",
@@ -245,12 +301,12 @@ def _build_summary_bubble(outbound, inbound, all_results):
         "type": "bubble", "size": "kilo",
         "header": {
             "type": "box", "layout": "vertical",
-            "backgroundColor": "#555555", "paddingAll": "md",
+            "backgroundColor": "#2C2C2C", "paddingAll": "md",
             "contents": [
-                {"type": "text", "text": "SUMMARY", "color": "#FFFFFF",
-                 "size": "xs", "weight": "bold"},
-                {"type": "text", "text": "BKK ↔ DAD",
-                 "color": "#FFFFFF", "size": "xl", "weight": "bold"},
+                {"type": "text", "text": "BKK ↔ DAD", "color": "#FFFFFF",
+                 "size": "xl", "weight": "bold"},
+                {"type": "text", "text": "Flight Tracker Summary",
+                 "color": "#AAAAAA", "size": "xs"},
             ]
         },
         "body": {
@@ -296,6 +352,40 @@ def _find_best_combos(outbound, inbound):
 
     combos.sort(key=lambda c: c['total'])
     return combos
+
+
+def _days_until(search_date):
+    try:
+        from datetime import date
+        dep = datetime.strptime(search_date, '%Y-%m-%d').date()
+        return (dep - date.today()).days
+    except (ValueError, TypeError):
+        return None
+
+
+def _compute_verdict(current, avg, lowest, trend, days_left, scrape_count):
+    if scrape_count < 3:
+        return "📊 Collecting data..."
+    if days_left is not None and days_left < 14:
+        return "🔴 BUY NOW — last 2 weeks"
+    if lowest and current <= lowest * 1.05:
+        if 'Rising' in trend or 'Stable' in trend or 'stable' in trend:
+            return "🟢 BUY — near lowest!"
+        else:
+            return "🟡 GOOD — still dropping"
+    if avg and current < avg:
+        if 'Falling' in trend or 'down' in trend:
+            return "🟡 WAIT — below avg, dropping"
+        else:
+            return "🟢 GOOD — below average"
+    if avg and current >= avg:
+        if ('Falling' in trend or 'down' in trend) and days_left and days_left > 21:
+            return "🟡 WAIT — trending down"
+        elif 'Rising' in trend or 'up' in trend:
+            return "🟠 RISKY — above avg, rising"
+        else:
+            return "🟡 WATCH — at average"
+    return "📊 Monitoring..."
 
 
 def _get_trend(price_history):

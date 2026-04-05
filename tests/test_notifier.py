@@ -70,8 +70,8 @@ def test_build_flex_message():
     flex = build_flex_message(_make_route_results())
     assert flex['type'] == 'carousel'
     assert len(flex['contents']) >= 2  # at least outbound + summary
-    # Check outbound bubble has header
-    assert flex['contents'][0]['header']['contents'][0]['text'] == 'OUTBOUND'
+    # Summary bubble is first
+    assert flex['contents'][0]['header']['contents'][0]['text'] == 'BKK ↔ DAD'
 
 
 def test_format_combined_message_no_flights():
