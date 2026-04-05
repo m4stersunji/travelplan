@@ -33,7 +33,7 @@ def build_google_flights_url(origin: str, destination: str, date: str) -> str:
 
 
 def create_driver():
-    """Creates a headless Chrome Selenium WebDriver with standard options."""
+    """Creates a headless Chrome Selenium WebDriver with anti-detection."""
     if not SELENIUM_AVAILABLE:
         raise RuntimeError("selenium is not installed")
 
@@ -44,13 +44,24 @@ def create_driver():
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--lang=en-US")
+    # Anti-detection: prevent Google from detecting headless/bot
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
+        "Chrome/146.0.7680.177 Safari/537.36"
     )
 
     driver = webdriver.Chrome(options=options)
+    # Remove navigator.webdriver flag
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.navigator.chrome = {runtime: {}};
+        """
+    })
     driver.set_page_load_timeout(30)
     return driver
 
@@ -81,15 +92,33 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
         except TimeoutException:
             logger.warning("Timed out waiting for flight results to load; parsing what we have")
 
-        # Expand grouped flights (Google Flights groups by airline, hiding some)
+        # Get booking options BEFORE expanding groups (DOM is cleaner)
+        page_source = driver.page_source
+        initial_flights = parse_flight_data(page_source)
+        booking_data = {}
+        if initial_flights:
+            booking_data = _get_booking_data(driver, initial_flights)
+
+        # Now reload and expand groups for full flight list
+        driver.get(url)
+        import time as _t
+        _t.sleep(8)
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
+            )
+        except TimeoutException:
+            pass
         _expand_flight_groups(driver)
 
         page_source = driver.page_source
         flights = parse_flight_data(page_source)
 
-        # Get booking options for cheapest direct flight
-        if flights:
-            _enrich_booking_options(driver, flights)
+        # Apply booking data to matching flights
+        for f in flights:
+            key = f"{f['airline']}|{f['price_thb']}"
+            if key in booking_data:
+                f.update(booking_data[key])
 
         return flights
 
@@ -191,6 +220,72 @@ def parse_flight_data(page_source: str) -> list:
     return flights
 
 
+def _get_booking_data(driver, flights):
+    """Get 3rd party booking prices for top direct flights.
+    Called BEFORE expanding groups (cleaner DOM = more booking sources).
+    Returns dict keyed by 'airline|price' with booking fields.
+    """
+    import time
+    result = {}
+
+    direct = [f for f in flights if f.get('num_stops', 1) == 0]
+    direct.sort(key=lambda f: f['price_thb'])
+
+    for flight in direct[:3]:
+        price = flight['price_thb']
+        dep_time_12h = _to_12h(flight.get('departure_time', ''))
+        if not dep_time_12h:
+            continue
+
+        try:
+            js = f'''
+            var links = document.querySelectorAll('[role="link"][aria-label*="{price} Thai baht"]');
+            for (var l of links) {{
+                if (l.getAttribute('aria-label').includes('{dep_time_12h}')) {{
+                    l.click();
+                    return true;
+                }}
+            }}
+            return false;
+            '''
+            clicked = driver.execute_script(js)
+            if not clicked:
+                continue
+
+            time.sleep(3)
+
+            # Expand "more booking options"
+            try:
+                more = driver.find_elements(By.XPATH, '//*[contains(text(), "more booking options")]')
+                for btn in more:
+                    driver.execute_script('arguments[0].click();', btn)
+                    time.sleep(1.5)
+            except Exception:
+                pass
+
+            body_text = driver.find_element(By.TAG_NAME, 'body').text
+            bookings = _parse_booking_text(body_text)
+
+            if bookings:
+                cheapest = min(bookings, key=lambda x: x[1])
+                key = f"{flight['airline']}|{price}"
+                result[key] = {
+                    'booking_options': bookings,
+                    'best_booking_price': cheapest[1],
+                    'best_booking_source': cheapest[0],
+                }
+                logger.info(f"Booking: {flight['airline']} ฿{price:,} → best ฿{cheapest[1]:,} via {cheapest[0]} ({len(bookings)} sources)")
+
+            # Close panel
+            driver.execute_script(js)
+            time.sleep(1)
+
+        except Exception as e:
+            logger.debug(f"Booking check failed for {flight.get('airline')}: {e}")
+
+    return result
+
+
 def _enrich_booking_options(driver, flights):
     """Click top direct flights to get 3rd party booking prices.
     Enriches flight dicts with 'booking_options' and 'best_booking_price'.
@@ -225,7 +320,16 @@ def _enrich_booking_options(driver, flights):
             if not clicked:
                 continue
 
-            time.sleep(2.5)
+            time.sleep(3)
+
+            # Expand "more booking options" if available
+            try:
+                more = driver.find_elements(By.XPATH, '//*[contains(text(), "more booking options")]')
+                for btn in more:
+                    driver.execute_script('arguments[0].click();', btn)
+                    time.sleep(1.5)
+            except Exception:
+                pass
 
             # Extract booking options from visible text
             body_text = driver.find_element(By.TAG_NAME, 'body').text
