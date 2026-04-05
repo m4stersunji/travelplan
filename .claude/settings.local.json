@@ -33,7 +33,12 @@
       "Bash(curl -s http://localhost:8501)",
       "Bash(streamlit run:*)",
       "Bash(git remote:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(npm install:*)",
+      "Bash(agent-browser install:*)",
+      "Bash(export PATH=\"/mnt/c/Program Files/nodejs:$PATH\")"
     ]
   }
 }

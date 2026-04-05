@@ -92,29 +92,26 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
         except TimeoutException:
             logger.warning("Timed out waiting for flight results to load; parsing what we have")
 
-        # Get booking options BEFORE expanding groups (DOM is cleaner)
+        # Step 1: Get booking options (clean DOM, before expanding)
         page_source = driver.page_source
         initial_flights = parse_flight_data(page_source)
         booking_data = {}
         if initial_flights:
             booking_data = _get_booking_data(driver, initial_flights)
 
-        # Now reload and expand groups for full flight list
-        driver.get(url)
+        # Step 2: Navigate back to close any open booking panel
         import time as _t
-        _t.sleep(8)
-        try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
-            )
-        except TimeoutException:
-            pass
+        driver.find_element(By.TAG_NAME, 'body').send_keys('\uf01b')  # Escape
+        _t.sleep(1)
+
+        # Step 3: Expand grouped flights on same page
         _expand_flight_groups(driver)
 
+        # Step 4: Parse all flights
         page_source = driver.page_source
         flights = parse_flight_data(page_source)
 
-        # Apply booking data to matching flights
+        # Step 5: Apply booking data to matching flights
         for f in flights:
             key = f"{f['airline']}|{f['price_thb']}"
             if key in booking_data:
