@@ -48,16 +48,21 @@ def push_to_sheets(route_results):
     if not sh:
         return False
 
-    try:
-        _update_overview(sh, route_results)
-        _update_all_flights(sh, route_results)
-        _update_price_history(sh, route_results)
-        _update_heatmap(sh, route_results)
-        logger.info("Google Sheets updated successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to update Google Sheets: {e}")
-        return False
+    success = True
+    for name, fn in [
+        ('Overview', _update_overview),
+        ('All Flights', _update_all_flights),
+        ('Price History', _update_price_history),
+        ('Heatmap', _update_heatmap),
+    ]:
+        try:
+            fn(sh, route_results)
+            logger.info(f"Sheets: {name} updated")
+        except Exception as e:
+            logger.error(f"Sheets: {name} failed: {e}")
+            success = False
+
+    return success
 
 
 def _update_overview(sh, route_results):
@@ -87,7 +92,7 @@ def _update_overview(sh, route_results):
             cheapest['airline'],
             cheapest['price_thb'],
             best_src,
-            best_bp if best_bp else cheapest['price_thb'],
+            best_bp if best_bp is not None else cheapest['price_thb'],
             best_src if best_src else 'Airline direct',
             now,
         ])
@@ -161,6 +166,12 @@ def _update_price_history(sh, route_results):
 
     ws = _get_or_create_sheet(sh, 'Price History', headers)
 
+    # Validate headers match (routes may have changed)
+    existing_headers = ws.row_values(1)
+    if existing_headers and existing_headers != headers:
+        logger.warning("Price History headers changed — updating row 1")
+        ws.update('A1', [headers])
+
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     row = [now]
 
@@ -199,7 +210,7 @@ def _update_heatmap(sh, route_results):
             r['route'],
             r['date_label'],
             cheapest['price_thb'],
-            best_bp if best_bp else cheapest['price_thb'],
+            best_bp if best_bp is not None else cheapest['price_thb'],
             cheapest['airline'],
             best_src,
             now,

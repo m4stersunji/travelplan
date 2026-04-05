@@ -26,7 +26,12 @@ def init_db(db_path):
             aircraft_type       TEXT,
             num_stops           INTEGER,
             is_direct           BOOLEAN,
-            is_excluded_airline BOOLEAN
+            is_excluded_airline BOOLEAN,
+            best_booking_price  INTEGER,
+            best_booking_source TEXT,
+            cabin_baggage       TEXT,
+            checked_baggage     TEXT,
+            service_type        TEXT
         );
         CREATE TABLE IF NOT EXISTS price_alerts (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,18 +62,24 @@ def insert_scrape_run(db_path, route, search_date, status):
 def insert_flight(db_path, scrape_run_id, airline, flight_number,
                   departure_airport, departure_time, arrival_airport, arrival_time,
                   duration_minutes, price_thb, aircraft_type,
-                  num_stops, is_direct, is_excluded_airline):
+                  num_stops, is_direct, is_excluded_airline,
+                  best_booking_price=None, best_booking_source=None,
+                  cabin_baggage=None, checked_baggage=None, service_type=None):
     conn = sqlite3.connect(db_path)
     conn.execute(
         """INSERT INTO flights (scrape_run_id, airline, flight_number,
            departure_airport, departure_time, arrival_airport, arrival_time,
            duration_minutes, price_thb, aircraft_type, num_stops,
-           is_direct, is_excluded_airline)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           is_direct, is_excluded_airline,
+           best_booking_price, best_booking_source,
+           cabin_baggage, checked_baggage, service_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (scrape_run_id, airline, flight_number,
          departure_airport, departure_time, arrival_airport, arrival_time,
          duration_minutes, price_thb, aircraft_type, num_stops,
-         is_direct, is_excluded_airline)
+         is_direct, is_excluded_airline,
+         best_booking_price, best_booking_source,
+         cabin_baggage, checked_baggage, service_type)
     )
     conn.commit()
     conn.close()

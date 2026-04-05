@@ -62,6 +62,11 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
             aircraft_type=f.get('aircraft_type', ''), num_stops=f.get('num_stops', 0),
             is_direct=f.get('is_direct', False),
             is_excluded_airline=f.get('is_excluded_airline', False),
+            best_booking_price=f.get('best_booking_price'),
+            best_booking_source=f.get('best_booking_source'),
+            cabin_baggage=f.get('cabin_baggage'),
+            checked_baggage=f.get('checked_baggage'),
+            service_type=f.get('service_type'),
         )
 
     prev_best = get_previous_best_price(db_path, route, date)
