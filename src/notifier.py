@@ -149,8 +149,9 @@ def _build_route_bubble(route_data, direction, color, top_n):
 
         # Score
         total_score = f.get('total_score', 0)
-        score_color = "#1DB446" if total_score >= 15 else "#FF8C00" if total_score >= 10 else "#999999"
-        score_str = f"★{total_score}" if total_score else ""
+        score_int = round(total_score) if total_score else 0
+        score_color = "#1DB446" if score_int >= 15 else "#FF8C00" if score_int >= 10 else "#999999"
+        score_str = f"★{score_int}" if score_int else ""
 
         flight_rows.append({
             "type": "box", "layout": "vertical", "spacing": "xs",
@@ -275,17 +276,18 @@ def _build_summary_bubble(outbound, inbound, all_results):
             if src:
                 price_text += f" ({src})"
 
+            score_int = round(score)
             contents.append({
                 "type": "box", "layout": "vertical", "margin": "sm",
                 "contents": [
                     {"type": "box", "layout": "horizontal", "contents": [
-                        {"type": "text", "text": f"{direction} {r['date_label']}", "size": "xxs", "color": "#AAAAAA", "flex": 3},
-                        {"type": "text", "text": f"★{score}/20", "size": "xxs", "weight": "bold",
-                         "color": "#1DB446" if score >= 15 else "#FF8C00", "flex": 2, "align": "end"},
+                        {"type": "text", "text": f"{direction} {r['date_label']}", "size": "xxs", "color": "#AAAAAA", "flex": 4},
+                        {"type": "text", "text": f"★{score_int}", "size": "xs", "weight": "bold",
+                         "color": "#1DB446" if score_int >= 15 else "#FF8C00", "flex": 1, "align": "end"},
                     ]},
-                    {"type": "text", "text": f"{price_text} {best['airline'][:18]}",
+                    {"type": "text", "text": f"{price_text}",
                      "size": "xs", "weight": "bold", "color": "#111111"},
-                    {"type": "text", "text": f"{dep}→{arr}",
+                    {"type": "text", "text": f"{best['airline'][:18]} {dep}→{arr}",
                      "size": "xxs", "color": "#999999"},
                 ]
             })
