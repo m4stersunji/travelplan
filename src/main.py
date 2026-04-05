@@ -3,12 +3,13 @@ import os
 import sys
 from datetime import datetime
 
-from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS, SCRAPER_EXPIRY_DATE
+from config import SEARCH_ROUTES, VALID_COMBOS, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS, SCRAPER_EXPIRY_DATE
 from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history, get_average_price
 from scraper import scrape_flights, classify_flight, score_flights
 from notifier import send_line_notification, send_line_flex, build_flex_message, format_combined_message
 from exporter import export_flights_to_csv
 from sheets_exporter import push_to_sheets
+from sheets_config import load_routes_from_sheet
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ def setup_logging():
     )
 
 
-def process_route(origin, destination, date, label, route_code, db_path, data_dir):
+def process_route(origin, destination, date, label, route_code, db_path, data_dir, **kwargs):
     """Process a single route. Returns a result dict for combined notification."""
     route = route_code
     date_label = datetime.strptime(date, '%Y-%m-%d').strftime('%d %b')
@@ -51,9 +52,11 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
     all_flights.sort(key=lambda f: f['price_thb'])
     flights = all_flights[:TOP_N_FLIGHTS]
 
-    # Score flights
+    # Score flights — use config from Sheet if available
     direction = 'outbound' if route_code.startswith('BKK') else 'return'
-    flights = score_flights(flights, direction)
+    ideal_hour = kwargs.get('ideal_hour')
+    score_mode = kwargs.get('score_mode')
+    flights = score_flights(flights, direction, ideal_hour=ideal_hour, score_mode=score_mode)
 
     run_id = insert_scrape_run(db_path, route=route, search_date=date, status='success')
     for f in flights:
@@ -121,17 +124,31 @@ def main():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     init_db(DB_PATH)
 
+    # Load routes: try Sheet config first, fall back to config.py
+    sheet_routes, sheet_combos = load_routes_from_sheet()
+    if sheet_routes:
+        active_routes = sheet_routes
+        # Temporarily override VALID_COMBOS for this run
+        import config as cfg
+        cfg.VALID_COMBOS = sheet_combos
+        logger.info(f"Using {len(active_routes)} routes from Google Sheets Config")
+    else:
+        active_routes = SEARCH_ROUTES
+        logger.info(f"Using {len(active_routes)} routes from config.py (Sheet config not available)")
+
     # Collect all results
     route_results = []
-    for route in SEARCH_ROUTES:
+    for route in active_routes:
         result = process_route(
             origin=route['origin'],
             destination=route['destination'],
             date=route['date'],
             label=route['label'],
-            route_code=route['route_code'],
+            route_code=route.get('route_code', ''),
             db_path=DB_PATH,
             data_dir=DATA_DIR,
+            ideal_hour=route.get('ideal_hour'),
+            score_mode=route.get('score_mode'),
         )
         route_results.append(result)
 
