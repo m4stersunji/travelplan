@@ -3,11 +3,12 @@ import os
 import sys
 from datetime import datetime
 
-from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR
+from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS
 from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history
 from scraper import scrape_flights, classify_flight
 from notifier import send_line_notification, send_line_flex, build_flex_message, format_combined_message
 from exporter import export_flights_to_csv
+from sheets_exporter import push_to_sheets
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,14 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
             'scrape_count': 0, 'price_history': [], 'success': False,
         }
 
-    flights = []
+    all_flights = []
     for f in raw_flights:
         classified = classify_flight(f, EXCLUDED_AIRLINES)
-        flights.append(classified)
+        all_flights.append(classified)
+
+    # Keep only top N cheapest flights
+    all_flights.sort(key=lambda f: f['price_thb'])
+    flights = all_flights[:TOP_N_FLIGHTS]
 
     run_id = insert_scrape_run(db_path, route=route, search_date=date, status='success')
     for f in flights:
@@ -118,6 +123,10 @@ def main():
             send_line_notification(message)
     else:
         logger.warning("No successful scrapes — skipping notification")
+
+    # Push to Google Sheets
+    if successful:
+        push_to_sheets(successful)
 
     # Summary log
     logger.info("=" * 60)

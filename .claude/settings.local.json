@@ -26,7 +26,8 @@
       "Bash(wget -q -O - https://dl.google.com/linux/linux_signing_key.pub)",
       "Bash(sudo gpg:*)",
       "Bash(bash:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(echo \"Server started - PID: $!\")"
     ]
   }
 }

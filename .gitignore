@@ -1,6 +1,7 @@
 data/
 logs/
 .env
+credentials.json
 __pycache__/
 *.pyc
 .pytest_cache/

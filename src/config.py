@@ -11,6 +11,13 @@ LOG_DIR = os.path.join(PROJECT_ROOT, 'logs')
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN', '')
 LINE_USER_ID = os.getenv('LINE_USER_ID', '')
 
+# Google Sheets
+GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID', '')
+GOOGLE_CREDENTIALS_PATH = os.getenv('GOOGLE_CREDENTIALS_PATH', os.path.join(PROJECT_ROOT, 'credentials.json'))
+
+# Only store top N cheapest flights per route/date
+TOP_N_FLIGHTS = 20
+
 EXCLUDED_AIRLINES = [
     "Emirates", "Qatar Airways", "Etihad", "Oman Air",
     "Saudia", "Gulf Air", "flynas", "Air Arabia",
