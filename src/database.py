@@ -17,15 +17,16 @@ def init_db(db_path):
             scrape_run_id       INTEGER NOT NULL REFERENCES scrape_runs(id),
             airline             TEXT,
             flight_number       TEXT,
+            departure_airport   TEXT,
             departure_time      TEXT,
+            arrival_airport     TEXT,
             arrival_time        TEXT,
             duration_minutes    INTEGER,
             price_thb           INTEGER,
             aircraft_type       TEXT,
             num_stops           INTEGER,
             is_direct           BOOLEAN,
-            is_excluded_airline BOOLEAN,
-            is_preferred_time   BOOLEAN
+            is_excluded_airline BOOLEAN
         );
         CREATE TABLE IF NOT EXISTS price_alerts (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,18 +54,21 @@ def insert_scrape_run(db_path, route, search_date, status):
     return run_id
 
 
-def insert_flight(db_path, scrape_run_id, airline, flight_number, departure_time,
-                  arrival_time, duration_minutes, price_thb, aircraft_type,
-                  num_stops, is_direct, is_excluded_airline, is_preferred_time):
+def insert_flight(db_path, scrape_run_id, airline, flight_number,
+                  departure_airport, departure_time, arrival_airport, arrival_time,
+                  duration_minutes, price_thb, aircraft_type,
+                  num_stops, is_direct, is_excluded_airline):
     conn = sqlite3.connect(db_path)
     conn.execute(
-        """INSERT INTO flights (scrape_run_id, airline, flight_number, departure_time,
-           arrival_time, duration_minutes, price_thb, aircraft_type, num_stops,
-           is_direct, is_excluded_airline, is_preferred_time)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (scrape_run_id, airline, flight_number, departure_time, arrival_time,
+        """INSERT INTO flights (scrape_run_id, airline, flight_number,
+           departure_airport, departure_time, arrival_airport, arrival_time,
+           duration_minutes, price_thb, aircraft_type, num_stops,
+           is_direct, is_excluded_airline)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (scrape_run_id, airline, flight_number,
+         departure_airport, departure_time, arrival_airport, arrival_time,
          duration_minutes, price_thb, aircraft_type, num_stops,
-         is_direct, is_excluded_airline, is_preferred_time)
+         is_direct, is_excluded_airline)
     )
     conn.commit()
     conn.close()

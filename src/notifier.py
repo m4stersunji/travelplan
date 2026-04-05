@@ -1,4 +1,5 @@
 import logging
+import json
 import requests
 from datetime import datetime
 
@@ -10,6 +11,7 @@ LINE_API_URL = "https://api.line.me/v2/bot/message/push"
 
 
 def send_line_notification(message):
+    """Send a text push message via LINE."""
     if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
         logger.warning("LINE credentials not configured — skipping notification")
         return False
@@ -36,6 +38,38 @@ def send_line_notification(message):
         return False
 
 
+def send_line_flex(flex_container):
+    """Send a Flex Message via LINE."""
+    if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
+        logger.warning("LINE credentials not configured — skipping notification")
+        return False
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+    }
+    payload = {
+        "to": LINE_USER_ID,
+        "messages": [{
+            "type": "flex",
+            "altText": "Flight Price Update",
+            "contents": flex_container,
+        }],
+    }
+
+    try:
+        resp = requests.post(LINE_API_URL, headers=headers, json=payload, timeout=10)
+        if resp.status_code == 200:
+            logger.info("LINE flex message sent successfully")
+            return True
+        else:
+            logger.error(f"LINE API error {resp.status_code}: {resp.text}")
+            return False
+    except requests.RequestException as e:
+        logger.error(f"Failed to send LINE flex: {e}")
+        return False
+
+
 def format_price_change(current_price, previous_price):
     if previous_price is None:
         return "NEW"
@@ -48,93 +82,178 @@ def format_price_change(current_price, previous_price):
         return "="
 
 
-def format_combined_message(route_results, top_n=5):
-    """Format a single combined message for all route/date combos.
+def build_flex_message(route_results, top_n=5):
+    """Build a LINE Flex Message carousel with flight data.
 
-    route_results: list of dicts with keys:
-        route, search_date, date_label, flights, prev_best, lowest_ever,
-        scrape_count, price_history
+    Returns a Flex carousel container dict.
     """
-    lines = [f"BKK-DAD Price Update"]
-    lines.append(f"{datetime.now().strftime('%d %b %H:%M')}")
-    lines.append("")
+    bubbles = []
 
     # Group by direction
     outbound = [r for r in route_results if r['route'].startswith('BKK')]
     inbound = [r for r in route_results if r['route'].startswith('DAD')]
 
-    # --- OUTBOUND ---
-    if outbound:
-        lines.append("OUTBOUND BKK > DAD")
-        lines.append("-" * 28)
-        for r in outbound:
-            lines.append(f"  {r['date_label']}")
-            all_flights = sorted(r['flights'], key=lambda f: f['price_thb'])[:top_n]
-            if not all_flights:
-                lines.append("  No flights found")
-            for f in all_flights:
-                price = f"฿{f['price_thb']:,}"
-                change = format_price_change(f['price_thb'], r['prev_best'])
-                direct = "" if f['is_direct'] else f" ({f['num_stops']}stop)"
-                excluded = " *" if f['is_excluded_airline'] else ""
-                pref = " <<" if f.get('is_preferred_time') else ""
-                airline = f['airline'][:18]
-                lines.append(f"  {price:>8} {change:>6} {airline}{direct}{excluded}{pref}")
-            lines.append("")
+    # Build outbound bubbles
+    for r in outbound:
+        bubble = _build_route_bubble(r, "OUTBOUND", "#1DB446", top_n)
+        if bubble:
+            bubbles.append(bubble)
 
-    # --- INBOUND ---
-    if inbound:
-        lines.append("RETURN DAD > BKK")
-        lines.append("-" * 28)
-        for r in inbound:
-            lines.append(f"  {r['date_label']}")
-            all_flights = sorted(r['flights'], key=lambda f: f['price_thb'])[:top_n]
-            if not all_flights:
-                lines.append("  No flights found")
-            for f in all_flights:
-                price = f"฿{f['price_thb']:,}"
-                change = format_price_change(f['price_thb'], r['prev_best'])
-                direct = "" if f['is_direct'] else f" ({f['num_stops']}stop)"
-                excluded = " *" if f['is_excluded_airline'] else ""
-                airline = f['airline'][:18]
-                lines.append(f"  {price:>8} {change:>6} {airline}{direct}{excluded}")
-            lines.append("")
+    # Build inbound bubbles
+    for r in inbound:
+        bubble = _build_route_bubble(r, "RETURN", "#0367D3", top_n)
+        if bubble:
+            bubbles.append(bubble)
 
-    # --- BEST COMBO ---
-    best_combos = _find_best_combos(outbound, inbound)
-    if best_combos:
-        lines.append("BEST ROUNDTRIP")
-        lines.append("-" * 28)
-        for combo in best_combos[:3]:
-            lines.append(f"  ฿{combo['total']:,} = {combo['out_date']} ฿{combo['out_price']:,} + {combo['in_date']} ฿{combo['in_price']:,}")
-        lines.append("")
+    # Build summary bubble
+    summary = _build_summary_bubble(outbound, inbound, route_results)
+    if summary:
+        bubbles.append(summary)
 
-    # --- HISTORICAL SUMMARY ---
-    lines.append("HISTORY")
-    lines.append("-" * 28)
-    for r in route_results:
+    return {"type": "carousel", "contents": bubbles}
+
+
+def _build_route_bubble(route_data, direction, color, top_n):
+    """Build a single bubble for one route/date."""
+    flights = sorted(route_data['flights'], key=lambda f: f['price_thb'])[:top_n]
+    if not flights:
+        return None
+
+    # Flight rows
+    flight_rows = []
+    for f in flights:
+        price = f"฿{f['price_thb']:,}"
+        airline = f['airline'][:20]
+        dep = f.get('departure_time', '?')
+        arr = f.get('arrival_time', '?')
+        dep_apt = f.get('departure_airport', '')
+        arr_apt = f.get('arrival_airport', '')
+        time_str = f"{dep}({dep_apt})→{arr}({arr_apt})" if dep_apt else f"{dep}→{arr}"
+
+        stops = "" if f.get('is_direct') else f" {f['num_stops']}stop"
+        excluded = " ⚠️" if f.get('is_excluded_airline') else ""
+
+        # Price color
+        price_color = "#999999" if f.get('is_excluded_airline') else "#111111"
+
+        flight_rows.append({
+            "type": "box", "layout": "vertical", "spacing": "xs",
+            "paddingBottom": "md",
+            "contents": [
+                {
+                    "type": "box", "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": price, "size": "md", "weight": "bold",
+                         "color": price_color, "flex": 3},
+                        {"type": "text", "text": f"{airline}{stops}{excluded}",
+                         "size": "xs", "color": "#666666", "flex": 5, "align": "end"},
+                    ]
+                },
+                {
+                    "type": "text", "text": time_str,
+                    "size": "xxs", "color": "#AAAAAA",
+                },
+            ]
+        })
+
+    # Add separator between flights
+    body_contents = []
+    for i, row in enumerate(flight_rows):
+        if i > 0:
+            body_contents.append({"type": "separator", "margin": "sm"})
+        body_contents.append(row)
+
+    return {
+        "type": "bubble", "size": "kilo",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": color,
+            "paddingAll": "md",
+            "contents": [
+                {"type": "text", "text": direction, "color": "#FFFFFF",
+                 "size": "xs", "weight": "bold"},
+                {"type": "text", "text": route_data['date_label'],
+                 "color": "#FFFFFF", "size": "xl", "weight": "bold"},
+            ]
+        },
+        "body": {
+            "type": "box", "layout": "vertical",
+            "spacing": "sm", "paddingAll": "md",
+            "contents": body_contents,
+        },
+    }
+
+
+def _build_summary_bubble(outbound, inbound, all_results):
+    """Build a summary bubble with best combos and history."""
+    contents = []
+
+    # Best roundtrip combos
+    combos = _find_best_combos(outbound, inbound)
+    if combos:
+        contents.append({"type": "text", "text": "BEST ROUNDTRIP", "size": "xs",
+                         "weight": "bold", "color": "#1DB446"})
+        for combo in combos[:3]:
+            contents.append({
+                "type": "text", "size": "sm", "weight": "bold",
+                "text": f"฿{combo['total']:,}",
+            })
+            contents.append({
+                "type": "text", "size": "xxs", "color": "#999999",
+                "text": f"  {combo['out_date']} ฿{combo['out_price']:,} + {combo['in_date']} ฿{combo['in_price']:,}",
+            })
+        contents.append({"type": "separator", "margin": "md"})
+
+    # History
+    contents.append({"type": "text", "text": "HISTORY", "size": "xs",
+                     "weight": "bold", "color": "#0367D3", "margin": "md"})
+    for r in all_results:
         if r['lowest_ever'] is not None:
             trend = _get_trend(r.get('price_history', []))
-            lines.append(f"  {r['date_label']}: low ฿{r['lowest_ever']:,} {trend} ({r['scrape_count']} checks)")
-    lines.append("")
+            trend_text = f" {trend}" if trend else ""
+            contents.append({
+                "type": "text", "size": "xxs", "color": "#666666",
+                "text": f"{r['date_label']}: lowest ฿{r['lowest_ever']:,}{trend_text} ({r['scrape_count']} checks)",
+            })
 
-    # Legend
-    lines.append("* = excluded airline | << = preferred time")
+    # Timestamp
+    contents.append({"type": "separator", "margin": "md"})
+    contents.append({
+        "type": "text", "size": "xxs", "color": "#AAAAAA", "margin": "md",
+        "text": f"Checked: {datetime.now().strftime('%d %b %H:%M')}",
+    })
 
-    return "\n".join(lines)
+    return {
+        "type": "bubble", "size": "kilo",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": "#555555", "paddingAll": "md",
+            "contents": [
+                {"type": "text", "text": "SUMMARY", "color": "#FFFFFF",
+                 "size": "xs", "weight": "bold"},
+                {"type": "text", "text": "BKK ↔ DAD",
+                 "color": "#FFFFFF", "size": "xl", "weight": "bold"},
+            ]
+        },
+        "body": {
+            "type": "box", "layout": "vertical",
+            "spacing": "sm", "paddingAll": "md",
+            "contents": contents,
+        },
+    }
 
 
 def _find_best_combos(outbound, inbound):
-    """Find cheapest roundtrip combinations."""
+    """Find cheapest roundtrip combinations (direct, non-excluded only)."""
     combos = []
     for out_r in outbound:
-        out_direct = [f for f in out_r['flights'] if f['is_direct'] and not f['is_excluded_airline'] and f['price_thb'] > 0]
+        out_direct = [f for f in out_r['flights'] if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
         if not out_direct:
             continue
         best_out = min(out_direct, key=lambda f: f['price_thb'])
 
         for in_r in inbound:
-            in_direct = [f for f in in_r['flights'] if f['is_direct'] and not f['is_excluded_airline'] and f['price_thb'] > 0]
+            in_direct = [f for f in in_r['flights'] if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
             if not in_direct:
                 continue
             best_in = min(in_direct, key=lambda f: f['price_thb'])
@@ -158,12 +277,39 @@ def _get_trend(price_history):
     prices = [h['best_price'] for h in price_history if h['best_price'] is not None]
     if len(prices) < 2:
         return ""
-    # Compare newest vs oldest in history
     newest = prices[0]
     oldest = prices[-1]
     if newest < oldest:
-        return "trending down"
+        return "↓down"
     elif newest > oldest:
-        return "trending up"
+        return "↑up"
     else:
-        return "stable"
+        return "→stable"
+
+
+# Keep text format as fallback
+def format_combined_message(route_results, top_n=5):
+    """Plain text fallback (used if Flex fails)."""
+    lines = [f"BKK-DAD Price Update {datetime.now().strftime('%d %b %H:%M')}", ""]
+
+    outbound = [r for r in route_results if r['route'].startswith('BKK')]
+    inbound = [r for r in route_results if r['route'].startswith('DAD')]
+
+    for direction, routes in [("GO", outbound), ("BACK", inbound)]:
+        for r in routes:
+            lines.append(f"[{direction}] {r['date_label']}")
+            flights = sorted(r['flights'], key=lambda f: f['price_thb'])[:top_n]
+            for f in flights:
+                dep = f.get('departure_time', '?')
+                arr = f.get('arrival_time', '?')
+                stops = "" if f.get('is_direct') else f" {f['num_stops']}stop"
+                lines.append(f"  ฿{f['price_thb']:,} {f['airline'][:18]}{stops} {dep}-{arr}")
+            lines.append("")
+
+    combos = _find_best_combos(outbound, inbound)
+    if combos:
+        lines.append("BEST COMBO")
+        for c in combos[:2]:
+            lines.append(f"  ฿{c['total']:,} = {c['out_date']} + {c['in_date']}")
+
+    return "\n".join(lines)

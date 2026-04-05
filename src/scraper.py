@@ -137,9 +137,17 @@ def parse_flight_data(page_source: str) -> list:
         airline_match = re.search(r'with\s+(.+?)\.?\s*Leaves', details)
         airline = airline_match.group(1).strip() if airline_match else ''
 
+        # Extract departure airport: "Leaves Don Mueang International Airport at" or "Leaves Suvarnabhumi Airport at"
+        dep_airport_match = re.search(r'Leaves\s+(.+?)\s+at\s+\d', details)
+        departure_airport = _short_airport(dep_airport_match.group(1)) if dep_airport_match else ''
+
         # Extract departure time: "at 6:05 PM on"
         dep_match = re.search(r'Leaves\s+.+?\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)\s+on', details)
         departure_time = normalize_time(dep_match.group(1)) if dep_match else ''
+
+        # Extract arrival airport: "arrives at Danang International Airport at"
+        arr_airport_match = re.search(r'arrives\s+at\s+(.+?)\s+at\s+\d', details)
+        arrival_airport = _short_airport(arr_airport_match.group(1)) if arr_airport_match else ''
 
         # Extract arrival time: "arrives at ... at 7:45 PM on"
         arr_match = re.search(r'arrives\s+at\s+.+?\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)\s+on', details)
@@ -154,8 +162,10 @@ def parse_flight_data(page_source: str) -> list:
 
         flights.append({
             "airline": airline,
-            "flight_number": '',  # Not in aria-label; populated if we add detail scraping later
+            "flight_number": '',
+            "departure_airport": departure_airport,
             "departure_time": departure_time,
+            "arrival_airport": arrival_airport,
             "arrival_time": arrival_time,
             "duration_minutes": duration_minutes,
             "price_thb": price_thb,
@@ -167,17 +177,11 @@ def parse_flight_data(page_source: str) -> list:
     return flights
 
 
-def classify_flight(
-    flight: dict,
-    excluded_airlines: list,
-    pref_dep_start: str,
-    pref_dep_end: str,
-) -> dict:
+def classify_flight(flight, excluded_airlines):
     """
-    Adds classification boolean flags to a flight dict:
+    Adds classification flags to a flight dict:
       - is_direct: True if num_stops == 0
       - is_excluded_airline: True if airline contains any excluded airline name
-      - is_preferred_time: True if departure_time is between pref_dep_start and pref_dep_end (inclusive)
     Returns the same dict (mutated) with new keys.
     """
     flight["is_direct"] = flight.get("num_stops", 1) == 0
@@ -188,16 +192,24 @@ def classify_flight(
         for excl in excluded_airlines
     )
 
-    dep_time_str = flight.get("departure_time", "")
-    try:
-        dep_time = datetime.strptime(dep_time_str, "%H:%M").time()
-        start_time = datetime.strptime(pref_dep_start, "%H:%M").time()
-        end_time = datetime.strptime(pref_dep_end, "%H:%M").time()
-        flight["is_preferred_time"] = start_time <= dep_time <= end_time
-    except (ValueError, TypeError):
-        flight["is_preferred_time"] = False
-
     return flight
+
+
+AIRPORT_SHORT = {
+    "Suvarnabhumi Airport": "BKK",
+    "Don Mueang International Airport": "DMK",
+    "Danang International Airport": "DAD",
+    "Da Nang International Airport": "DAD",
+}
+
+
+def _short_airport(full_name):
+    """Convert full airport name to short code."""
+    for name, code in AIRPORT_SHORT.items():
+        if name.lower() in full_name.lower():
+            return code
+    # Fallback: take first 3 chars
+    return full_name[:3] if full_name else ''
 
 
 def normalize_time(time_str: str) -> str:

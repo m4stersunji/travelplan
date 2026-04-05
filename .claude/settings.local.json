@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs -I {} dirname {})",
+      "Bash(pip3 list:*)",
+      "Bash(git init:*)",
+      "Bash(pip3 install:*)",
+      "Bash(google-chrome --version)",
+      "Bash(python3 -m pip install -r /home/m4stersun/travelplan/requirements.txt)",
+      "Bash(sudo apt-get:*)",
+      "Bash(python3 -m ensurepip --user)",
+      "Bash(python3 -c \"import pip; print\\('pip available'\\)\")",
+      "Bash(python3 -c \"import ensurepip; ensurepip.bootstrap\\(\\); print\\('bootstrapped'\\)\")",
+      "Bash(curl -sS https://bootstrap.pypa.io/get-pip.py)",
+      "Bash(python3 --user)",
+      "Bash(curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py)",
+      "Bash(python3 /tmp/get-pip.py --user)",
+      "Bash(python3 /tmp/get-pip.py --user --break-system-packages)",
+      "Bash(python3 -m pip install --user --break-system-packages -r /home/m4stersun/travelplan/requirements.txt)",
+      "Bash(python3:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git config:*)",
+      "Bash(git commit:*)",
+      "Bash(chmod +x /home/m4stersun/travelplan/setup_cron.sh)",
+      "Bash(wget -q -O - https://dl.google.com/linux/linux_signing_key.pub)",
+      "Bash(sudo gpg:*)",
+      "Bash(bash:*)",
+      "WebSearch"
+    ]
+  }
+}

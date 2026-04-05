@@ -11,9 +11,10 @@ from main import process_route
 def test_process_route_with_mock_scraper():
     mock_flights = [
         {
-            'airline': 'Thai AirAsia', 'flight_number': 'FD636',
-            'departure_time': '10:15', 'arrival_time': '12:15',
-            'duration_minutes': 120, 'price_thb': 3250,
+            'airline': 'Thai AirAsia', 'flight_number': '',
+            'departure_airport': 'DMK', 'departure_time': '07:50',
+            'arrival_airport': 'DAD', 'arrival_time': '09:30',
+            'duration_minutes': 100, 'price_thb': 3370,
             'aircraft_type': 'A320', 'num_stops': 0,
         },
     ]
@@ -27,8 +28,9 @@ def test_process_route_with_mock_scraper():
             init_db(db_path)
 
             result = process_route(
-                origin='BKK', destination='DAD', date='2026-05-29',
-                label='BKK-DAD-May29', db_path=db_path, data_dir=data_dir
+                origin='Bangkok', destination='Danang', date='2026-05-29',
+                label='BKK-DAD-May29', route_code='BKK-DAD',
+                db_path=db_path, data_dir=data_dir
             )
 
             assert result['success'] is True
@@ -46,8 +48,9 @@ def test_process_route_scraper_fails():
             init_db(db_path)
 
             result = process_route(
-                origin='BKK', destination='DAD', date='2026-05-29',
-                label='BKK-DAD-May29', db_path=db_path, data_dir=data_dir
+                origin='Bangkok', destination='Danang', date='2026-05-29',
+                label='BKK-DAD-May29', route_code='BKK-DAD',
+                db_path=db_path, data_dir=data_dir
             )
 
             assert result['success'] is False

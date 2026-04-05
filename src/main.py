@@ -3,10 +3,10 @@ import os
 import sys
 from datetime import datetime
 
-from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, PREFERRED_DEPARTURE_START, PREFERRED_DEPARTURE_END, DB_PATH, DATA_DIR, LOG_DIR
+from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR
 from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history
 from scraper import scrape_flights, classify_flight
-from notifier import send_line_notification, format_combined_message
+from notifier import send_line_notification, send_line_flex, build_flex_message, format_combined_message
 from exporter import export_flights_to_csv
 
 logger = logging.getLogger(__name__)
@@ -25,9 +25,9 @@ def setup_logging():
     )
 
 
-def process_route(origin, destination, date, label, db_path, data_dir):
+def process_route(origin, destination, date, label, route_code, db_path, data_dir):
     """Process a single route. Returns a result dict for combined notification."""
-    route = f"{origin}-{destination}"
+    route = route_code
     date_label = datetime.strptime(date, '%Y-%m-%d').strftime('%d %b')
 
     raw_flights = scrape_flights(origin, destination, date)
@@ -43,7 +43,7 @@ def process_route(origin, destination, date, label, db_path, data_dir):
 
     flights = []
     for f in raw_flights:
-        classified = classify_flight(f, EXCLUDED_AIRLINES, PREFERRED_DEPARTURE_START, PREFERRED_DEPARTURE_END)
+        classified = classify_flight(f, EXCLUDED_AIRLINES)
         flights.append(classified)
 
     run_id = insert_scrape_run(db_path, route=route, search_date=date, status='success')
@@ -51,12 +51,12 @@ def process_route(origin, destination, date, label, db_path, data_dir):
         insert_flight(
             db_path, scrape_run_id=run_id,
             airline=f.get('airline', ''), flight_number=f.get('flight_number', ''),
-            departure_time=f.get('departure_time', ''), arrival_time=f.get('arrival_time', ''),
+            departure_airport=f.get('departure_airport', ''), departure_time=f.get('departure_time', ''),
+            arrival_airport=f.get('arrival_airport', ''), arrival_time=f.get('arrival_time', ''),
             duration_minutes=f.get('duration_minutes', 0), price_thb=f.get('price_thb', 0),
             aircraft_type=f.get('aircraft_type', ''), num_stops=f.get('num_stops', 0),
             is_direct=f.get('is_direct', False),
             is_excluded_airline=f.get('is_excluded_airline', False),
-            is_preferred_time=f.get('is_preferred_time', False),
         )
 
     prev_best = get_previous_best_price(db_path, route, date)
@@ -102,16 +102,20 @@ def main():
             destination=route['destination'],
             date=route['date'],
             label=route['label'],
+            route_code=route['route_code'],
             db_path=DB_PATH,
             data_dir=DATA_DIR,
         )
         route_results.append(result)
 
-    # Send ONE combined LINE notification
+    # Send ONE combined LINE notification (Flex card, fallback to text)
     successful = [r for r in route_results if r['success']]
     if successful:
-        message = format_combined_message(successful)
-        send_line_notification(message)
+        flex = build_flex_message(successful)
+        if not send_line_flex(flex):
+            logger.warning("Flex message failed, falling back to text")
+            message = format_combined_message(successful)
+            send_line_notification(message)
     else:
         logger.warning("No successful scrapes — skipping notification")
 

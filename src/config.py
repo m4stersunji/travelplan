@@ -16,12 +16,10 @@ EXCLUDED_AIRLINES = [
     "Saudia", "Gulf Air", "flynas", "Air Arabia",
 ]
 
-PREFERRED_DEPARTURE_START = "09:00"
-PREFERRED_DEPARTURE_END = "12:00"
-
+# Use city names to include all airports (BKK Suvarnabhumi + DMK Don Mueang)
 SEARCH_ROUTES = [
-    {"origin": "BKK", "destination": "DAD", "date": "2026-05-29", "label": "BKK-DAD-May29"},
-    {"origin": "BKK", "destination": "DAD", "date": "2026-05-30", "label": "BKK-DAD-May30"},
-    {"origin": "DAD", "destination": "BKK", "date": "2026-06-01", "label": "DAD-BKK-Jun01"},
-    {"origin": "DAD", "destination": "BKK", "date": "2026-06-02", "label": "DAD-BKK-Jun02"},
+    {"origin": "Bangkok", "destination": "Danang", "date": "2026-05-29", "label": "BKK-DAD-May29", "route_code": "BKK-DAD"},
+    {"origin": "Bangkok", "destination": "Danang", "date": "2026-05-30", "label": "BKK-DAD-May30", "route_code": "BKK-DAD"},
+    {"origin": "Danang", "destination": "Bangkok", "date": "2026-06-01", "label": "DAD-BKK-Jun01", "route_code": "DAD-BKK"},
+    {"origin": "Danang", "destination": "Bangkok", "date": "2026-06-02", "label": "DAD-BKK-Jun02", "route_code": "DAD-BKK"},
 ]
