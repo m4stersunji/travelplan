@@ -139,12 +139,12 @@ def _build_route_bubble(route_data, direction, color, top_n):
         cabin_short = cabin.replace(' carry-on', '')
         bag_short = f"{cabin_short}/{checked_short}"
 
-        # Best booking price (3rd party may be cheaper)
-        best_price = f.get('best_booking_price')
-        best_source = f.get('best_booking_source', '')
-        if best_price and best_price < f['price_thb']:
-            price_line = f"฿{best_price:,} via {best_source}"
-            price_color = "#1DB446"  # Green for savings
+        # Show cheapest price (3rd party or airline direct)
+        best_bp = f.get('best_booking_price')
+        best_src = f.get('best_booking_source', '')
+        if best_bp and best_bp < f['price_thb']:
+            price_line = f"฿{best_bp:,} ({best_src})"
+            price_color = "#1DB446"  # Green for cheaper 3rd party
         else:
             price_line = price
             price_color = "#999999" if f.get('is_excluded_airline') else "#111111"
