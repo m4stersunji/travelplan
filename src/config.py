@@ -18,6 +18,10 @@ GOOGLE_CREDENTIALS_PATH = os.getenv('GOOGLE_CREDENTIALS_PATH', os.path.join(PROJ
 # Only store top N cheapest flights per route/date
 TOP_N_FLIGHTS = 20
 
+# Auto-stop: scraper won't run after this date (1 month from now or set manually)
+# Format: YYYY-MM-DD or empty string to disable
+SCRAPER_EXPIRY_DATE = os.getenv('SCRAPER_EXPIRY_DATE', '2026-05-05')
+
 EXCLUDED_AIRLINES = [
     "Emirates", "Qatar Airways", "Etihad", "Oman Air",
     "Saudia", "Gulf Air", "flynas", "Air Arabia",

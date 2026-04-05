@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime
 
-from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS
+from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS, SCRAPER_EXPIRY_DATE
 from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history, get_average_price
 from scraper import scrape_flights, classify_flight, score_flights
 from notifier import send_line_notification, send_line_flex, build_flex_message, format_combined_message
@@ -103,6 +103,17 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
 
 def main():
     setup_logging()
+
+    # Auto-stop check
+    if SCRAPER_EXPIRY_DATE:
+        try:
+            expiry = datetime.strptime(SCRAPER_EXPIRY_DATE, '%Y-%m-%d').date()
+            if datetime.now().date() > expiry:
+                logger.info(f"Scraper expired on {SCRAPER_EXPIRY_DATE}. To continue, update SCRAPER_EXPIRY_DATE in .env or config.py")
+                return
+        except ValueError:
+            pass
+
     logger.info("=" * 60)
     logger.info(f"Starting flight price check at {datetime.now().isoformat()}")
     logger.info("=" * 60)
