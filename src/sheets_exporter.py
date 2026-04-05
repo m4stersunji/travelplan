@@ -2,7 +2,8 @@ import logging
 import gspread
 from datetime import datetime, date
 
-from config import GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_PATH, SEARCH_ROUTES
+from config import GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_PATH
+from flight_utils import best_price, eligible_flights, get_trend, days_until, verdict_string, score_label, find_best_combos
 
 logger = logging.getLogger(__name__)
 
@@ -31,35 +32,22 @@ def _get_or_create_sheet(spreadsheet, title, headers):
     return ws
 
 
-def _eligible(flights):
-    """Direct, non-excluded flights with price > 0."""
-    return [f for f in flights if f.get('is_direct') and not f.get('is_excluded_airline') and f.get('price_thb', 0) > 0]
-
-
-def _best_price(flight):
-    """Cheapest price for a flight (3rd party or airline)."""
-    bp = flight.get('best_booking_price')
-    if bp is not None and bp > 0:
-        return bp
-    return flight['price_thb']
-
-
 def _now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
-def push_to_sheets(route_results):
+def push_to_sheets(route_results, valid_combos=None):
     sh = get_sheets_client()
     if not sh:
         return False
 
     success = True
     for name, fn in [
-        ('Overview', _update_overview),
+        ('Overview', lambda sh, rr: _update_overview(sh, rr, valid_combos or [])),
         ('All Flights', _update_all_flights),
         ('Price History', _update_price_history),
         ('Heatmap', _update_heatmap),
-        ('Dashboard', _update_dashboard),
+        ('Dashboard', lambda sh, rr: _update_dashboard(sh, rr, valid_combos or [])),
     ]:
         try:
             fn(sh, route_results)
@@ -72,7 +60,7 @@ def push_to_sheets(route_results):
 
 # ─── Overview ───────────────────────────────────────────
 
-def _update_overview(sh, route_results):
+def _update_overview(sh, route_results, valid_combos):
     headers = ['Route', 'Date', 'Cheapest Airline', 'Airline Price', 'Best Source', 'Best Price', 'Last Check']
     ws = _get_or_create_sheet(sh, 'Overview', headers)
 
@@ -80,7 +68,7 @@ def _update_overview(sh, route_results):
     now = _now()
 
     for r in route_results:
-        direct = _eligible(r.get('flights', []))
+        direct = eligible_flights(r.get('flights', []))
         if not direct:
             continue
         c = min(direct, key=lambda f: f['price_thb'])
@@ -96,7 +84,7 @@ def _update_overview(sh, route_results):
 
     outbound = [r for r in route_results if r['route'].startswith('BKK')]
     inbound = [r for r in route_results if r['route'].startswith('DAD')]
-    combo = _find_best_combo(outbound, inbound)
+    combo = _find_best_combo(outbound, inbound, valid_combos)
     if combo:
         rows.append([])
         rows.append(['BEST ROUNDTRIP', '', '', '', f"{combo['out_date']} + {combo['in_date']}", combo['total'], now])
@@ -176,7 +164,7 @@ def _update_price_history(sh, route_results):
     row = [now]
 
     for r in route_results:
-        direct = _eligible(r.get('flights', []))
+        direct = eligible_flights(r.get('flights', []))
         if direct:
             c = min(direct, key=lambda f: f['price_thb'])
             row.append(c['price_thb'])
@@ -207,7 +195,7 @@ def _update_heatmap(sh, route_results):
         for group in [outbound, inbound]:
             r = group.get(d)
             if r:
-                direct = _eligible(r.get('flights', []))
+                direct = eligible_flights(r.get('flights', []))
                 if direct:
                     c = min(direct, key=lambda f: f['price_thb'])
                     row.append(c['price_thb'])
@@ -226,7 +214,7 @@ def _update_heatmap(sh, route_results):
 
 # ─── Dashboard ──────────────────────────────────────────
 
-def _update_dashboard(sh, route_results):
+def _update_dashboard(sh, route_results, valid_combos):
     ws = _get_or_create_sheet(sh, 'Dashboard', [''])
     ws.clear()
 
@@ -241,7 +229,7 @@ def _update_dashboard(sh, route_results):
     rows.append([])
 
     # === BEST ROUNDTRIP ===
-    combo = _find_best_combo(outbound, inbound)
+    combo = _find_best_combo(outbound, inbound, valid_combos)
     if combo:
         rows.append(['BEST ROUNDTRIP', '', '', '', '', '', '', ''])
         rows.append([combo['total'], '', f'{combo["out_date"]} + {combo["in_date"]}', '', '', '', '', ''])
@@ -252,17 +240,17 @@ def _update_dashboard(sh, route_results):
     rows.append(['Route', 'Date', 'Current', 'Average', 'Lowest Ever', 'Trend', 'Days Left', 'Verdict'])
 
     for r in route_results:
-        direct = _eligible(r.get('flights', []))
+        direct = eligible_flights(r.get('flights', []))
         if not direct:
             continue
         c = min(direct, key=lambda f: f['price_thb'])
-        current = _best_price(c)
+        current = best_price(c)
         avg = r.get('avg_price')
         lowest = r.get('lowest_ever')
         history = r.get('price_history', [])
-        trend = _get_trend(history)
-        days_left = _days_until(r.get('search_date', ''))
-        verdict = _compute_verdict(current, avg, lowest, trend, days_left, r.get('scrape_count', 0))
+        trend = get_trend(history)
+        dl = days_until(r.get('search_date', ''))
+        verdict = verdict_string(current, avg, lowest, trend, dl, r.get('scrape_count', 0))
 
         rows.append([
             r['route'],
@@ -271,7 +259,7 @@ def _update_dashboard(sh, route_results):
             avg if avg else 'N/A',
             lowest if lowest else 'N/A',
             trend,
-            days_left if days_left else '?',
+            dl if dl else '?',
             verdict,
         ])
 
@@ -344,86 +332,6 @@ def _update_dashboard(sh, route_results):
         ws.format('A4', {'textFormat': {'bold': True, 'fontSize': 18, 'foregroundColorStyle': {'rgbColor': {'red': 0.1, 'green': 0.7, 'blue': 0.2}}}})
 
 
-# ─── Buy Recommendation Logic ──────────────────────────
-
-def _get_trend(price_history):
-    if len(price_history) < 2:
-        return "Not enough data"
-    prices = [h['best_price'] for h in price_history if h.get('best_price')]
-    if len(prices) < 2:
-        return "Not enough data"
-    newest = prices[0]
-    oldest = prices[-1]
-    if newest < oldest:
-        return "↓ Falling"
-    elif newest > oldest:
-        return "↑ Rising"
-    return "→ Stable"
-
-
-def _days_until(search_date):
-    try:
-        dep = datetime.strptime(search_date, '%Y-%m-%d').date()
-        return (dep - date.today()).days
-    except (ValueError, TypeError):
-        return None
-
-
-def _compute_verdict(current, avg, lowest, trend, days_left, scrape_count):
-    if scrape_count < 3:
-        return "📊 Collecting data... (need more checks)"
-
-    if days_left is not None and days_left < 14:
-        return "🔴 BUY NOW — prices rise in final 2 weeks"
-
-    if lowest and current <= lowest * 1.05:
-        if 'Rising' in trend or 'Stable' in trend:
-            return "🟢 BUY NOW — near lowest, not dropping"
-        else:
-            return "🟡 GOOD PRICE — near lowest, still falling"
-
-    if avg and current < avg:
-        if 'Falling' in trend:
-            return "🟡 WAIT — below avg but still dropping"
-        else:
-            return "🟢 GOOD PRICE — below average"
-
-    if avg and current >= avg:
-        if 'Falling' in trend and days_left and days_left > 21:
-            return "🟡 WAIT — above avg but trending down"
-        elif 'Rising' in trend:
-            return "🟠 RISKY — above avg and rising"
-        else:
-            return "🟡 WATCH — at average price"
-
-    return "📊 Monitoring..."
-
-
-# ─── Helpers ────────────────────────────────────────────
-
-def _find_best_combo(outbound, inbound):
-    from config import VALID_COMBOS
-
-    out_by_date = {r['search_date']: r for r in outbound}
-    in_by_date = {r['search_date']: r for r in inbound}
-
-    combos = []
-    for go_date, back_date in VALID_COMBOS:
-        out_r = out_by_date.get(go_date)
-        in_r = in_by_date.get(back_date)
-        if not out_r or not in_r:
-            continue
-        out_direct = _eligible(out_r.get('flights', []))
-        in_direct = _eligible(in_r.get('flights', []))
-        if not out_direct or not in_direct:
-            continue
-        best_out = min(out_direct, key=_best_price)
-        best_in = min(in_direct, key=_best_price)
-        combos.append({
-            'total': _best_price(best_out) + _best_price(best_in),
-            'out_date': out_r['date_label'],
-            'in_date': in_r['date_label'],
-        })
-    if combos:
-        return min(combos, key=lambda c: c['total'])
-    return None
+def _find_best_combo(outbound, inbound, valid_combos):
+    combos = find_best_combos(outbound, inbound, valid_combos)
+    return combos[0] if combos else None

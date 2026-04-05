@@ -13,22 +13,20 @@ logger = logging.getLogger(__name__)
 
 CONFIG_HEADERS = [
     'Trip Name', 'From', 'To', 'Go Date', 'Back Date',
-    'Prefer Depart', 'Prefer Arrive', 'Active', 'Added By'
+    'Prefer Depart', 'Prefer Arrive', 'Active', 'Added By', 'Status'
 ]
 
 EXAMPLE_ROWS = [
-    ['Danang', 'Bangkok', 'Danang', '2026-05-29', '2026-06-01', '12:00', '18:00', 'Yes', 'Owner'],
-    ['Danang', 'Bangkok', 'Danang', '2026-05-30', '2026-06-02', '12:00', '18:00', 'Yes', 'Owner'],
-    ['', '', '', '', '', '', '', '', ''],
-    ['HOW TO ADD A TRIP:', '', '', '', '', '', '', '', ''],
-    ['1. Add a new row above this line', '', '', '', '', '', '', '', ''],
-    ['2. Trip Name = any name', '', '', '', '', '', '', '', ''],
-    ['3. From/To = city name (Bangkok, Tokyo, Osaka, Danang, Seoul, Singapore...)', '', '', '', '', '', '', '', ''],
-    ['4. Go Date/Back Date = YYYY-MM-DD', '', '', '', '', '', '', '', ''],
-    ['5. Prefer Depart = best departure time for outbound (e.g., 12:00 = noon)', '', '', '', '', '', '', '', ''],
-    ['6. Prefer Arrive = best arrival time for return (e.g., 18:00 = 6pm)', '', '', '', '', '', '', '', ''],
-    ['7. Active = Yes or No', '', '', '', '', '', '', '', ''],
-    ['8. Added By = your name', '', '', '', '', '', '', '', ''],
+    ['Danang', 'Bangkok', 'Danang', '2026-05-29', '2026-06-01', '12:00', '18:00', 'Yes', 'Owner', ''],
+    ['Danang', 'Bangkok', 'Danang', '2026-05-30', '2026-06-02', '12:00', '18:00', 'Yes', 'Owner', ''],
+    ['', '', '', '', '', '', '', '', '', ''],
+    ['HOW TO ADD A TRIP:', '', '', '', '', '', '', '', '', ''],
+    ['1. Add a new row above this line', '', '', '', '', '', '', '', '', ''],
+    ['2. Trip Name = any name', '', '', '', '', '', '', '', '', ''],
+    ['3. From/To = city name (Bangkok, Tokyo, Osaka, Danang, Seoul...)', '', '', '', '', '', '', '', '', ''],
+    ['4. Go Date/Back Date = YYYY-MM-DD', '', '', '', '', '', '', '', '', ''],
+    ['5. Prefer Depart/Arrive = time (12:00 = noon, 18:00 = 6pm)', '', '', '', '', '', '', '', '', ''],
+    ['6. Active = Yes or No | Status column updates automatically', '', '', '', '', '', '', '', '', ''],
 ]
 
 
@@ -80,8 +78,9 @@ def load_routes_from_sheet():
 
         search_routes = []
         valid_combos = []
+        statuses = []  # (row_idx, status) for writeback
 
-        for row in rows:
+        for row_num, row in enumerate(rows, start=2):  # +2: header + 0-index
             # Skip inactive, empty, or instruction rows
             active = str(row.get('Active', '')).strip().lower()
             if active not in ('yes', 'y', 'true', '1'):
@@ -103,11 +102,13 @@ def load_routes_from_sheet():
                 go_dt = datetime.strptime(go_date, '%Y-%m-%d')
                 back_dt = datetime.strptime(back_date, '%Y-%m-%d')
             except ValueError:
-                logger.warning(f"Invalid date format in Config: {go_date} / {back_date} — skipping")
+                logger.warning(f"Invalid date format: {go_date} / {back_date}")
+                statuses.append((row_num, f"Error: invalid date format"))
                 continue
 
             if back_dt <= go_dt:
-                logger.warning(f"Back date must be after go date: {go_date} → {back_date} — skipping")
+                logger.warning(f"Back date before go date: {go_date} → {back_date}")
+                statuses.append((row_num, f"Error: return before departure"))
                 continue
 
             # Build route code from first 3 chars of city name (simplified)
@@ -150,6 +151,10 @@ def load_routes_from_sheet():
             # Valid combo
             valid_combos.append((go_date, back_date))
 
+            # Mark as tracking
+            now_str = datetime.now().strftime('%d %b %H:%M')
+            statuses.append((row_num, f"Tracking (last: {now_str})"))
+
         if search_routes:
             # Deduplicate routes (same origin+destination+date)
             seen = set()
@@ -159,6 +164,10 @@ def load_routes_from_sheet():
                 if key not in seen:
                     seen.add(key)
                     unique_routes.append(r)
+
+            # Write status back to Config tab
+            if statuses:
+                write_config_status(statuses)
 
             logger.info(f"Loaded {len(unique_routes)} routes and {len(valid_combos)} combos from Config sheet")
             return unique_routes, valid_combos
@@ -187,6 +196,24 @@ CITY_CODES = {
     'phuket': 'HKT',
     'chiang mai': 'CNX',
 }
+
+
+def write_config_status(statuses):
+    """Write status back to Config tab. statuses = list of (row_index, status_text)."""
+    if not GOOGLE_SHEET_ID or not GOOGLE_CREDENTIALS_PATH:
+        return
+    try:
+        gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_PATH)
+        sh = gc.open_by_key(GOOGLE_SHEET_ID)
+        ws = sh.worksheet('Config')
+        # Ensure sheet has enough columns for Status (col J = 10)
+        if ws.col_count < 10:
+            ws.resize(cols=10)
+        for row_idx, status_text in statuses:
+            ws.update_acell(f'J{row_idx}', status_text)
+        logger.info(f"Config status updated for {len(statuses)} trips")
+    except Exception as e:
+        logger.error(f"Failed to write config status: {e}")
 
 
 def _parse_time_pref(time_str, default=12.0):

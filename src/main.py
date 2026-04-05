@@ -152,10 +152,14 @@ def main():
         )
         route_results.append(result)
 
+    # Get current valid combos
+    import config as cfg
+    current_combos = cfg.VALID_COMBOS
+
     # Send ONE combined LINE notification (Flex card, fallback to text)
     successful = [r for r in route_results if r['success']]
     if successful:
-        flex = build_flex_message(successful)
+        flex = build_flex_message(successful, current_combos)
         if not send_line_flex(flex):
             logger.warning("Flex message failed, falling back to text")
             message = format_combined_message(successful)
@@ -165,7 +169,7 @@ def main():
 
     # Push to Google Sheets
     if successful:
-        push_to_sheets(successful)
+        push_to_sheets(successful, current_combos)
 
     # Summary log
     logger.info("=" * 60)
