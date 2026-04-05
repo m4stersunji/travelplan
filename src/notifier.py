@@ -210,105 +210,157 @@ def _build_route_bubble(route_data, direction, color, top_n):
 
 
 def _build_summary_bubble(outbound, inbound, all_results):
-    """Build summary bubble: buy advice + best combo + best scored flights."""
-    from sheets_exporter import _best_price as sheets_best_price, _eligible
+    """Summary card: best deal + should you book now?
 
+    Designed to answer in 5 seconds: "Should I open Agoda and book?"
+    """
     contents = []
 
-    # --- BEST ROUNDTRIP ---
-    combos = _find_best_combos(outbound, inbound)
-    if combos:
-        best = combos[0]
-        contents.append({"type": "text", "text": "BEST ROUNDTRIP", "size": "xxs",
-                         "weight": "bold", "color": "#AAAAAA"})
-        contents.append({"type": "text", "text": f"฿{best['total']:,}",
+    # Find the best outbound and return flights by total_score
+    best_go = _pick_best_flight(outbound)
+    best_back = _pick_best_flight(inbound)
+
+    if not best_go and not best_back:
+        contents.append({"type": "text", "text": "No flights found", "size": "md"})
+        return _wrap_summary_bubble(contents)
+
+    # --- BEST DEAL RIGHT NOW ---
+    # Roundtrip total
+    if best_go and best_back:
+        go_price = _best_price(best_go['flight'])
+        back_price = _best_price(best_back['flight'])
+        total = go_price + back_price
+
+        contents.append({"type": "text", "text": "BEST DEAL NOW", "size": "xxs", "color": "#AAAAAA"})
+        contents.append({"type": "text", "text": f"฿{total:,} roundtrip",
                          "size": "xxl", "weight": "bold", "color": "#1DB446"})
-        contents.append({"type": "text", "text": f"{best['out_date']} ฿{best['out_price']:,} + {best['in_date']} ฿{best['in_price']:,}",
-                         "size": "xxs", "color": "#999999"})
-        contents.append({"type": "separator", "margin": "md"})
 
-    # --- SHOULD YOU BUY? ---
-    contents.append({"type": "text", "text": "SHOULD YOU BUY?", "size": "xs",
-                     "weight": "bold", "color": "#FF6B35", "margin": "md"})
+    # --- GO flight ---
+    if best_go:
+        f = best_go['flight']
+        r = best_go['route']
+        _add_flight_row(contents, "GO", r['date_label'], f)
 
-    for r in all_results:
-        direct = _eligible(r.get('flights', []))
-        if not direct:
-            continue
-        c = min(direct, key=lambda f: f['price_thb'])
-        current = sheets_best_price(c)
-        avg = r.get('avg_price')
-        lowest = r.get('lowest_ever')
-        trend = _get_trend(r.get('price_history', []))
-        days = _days_until(r.get('search_date', ''))
-        verdict = _compute_verdict(current, avg, lowest, trend, days, r.get('scrape_count', 0))
-
-        contents.append({
-            "type": "box", "layout": "horizontal", "margin": "sm",
-            "contents": [
-                {"type": "text", "text": f"{r['date_label']}", "size": "xs",
-                 "color": "#555555", "flex": 2},
-                {"type": "text", "text": verdict, "size": "xxs",
-                 "color": "#333333", "flex": 5, "wrap": True},
-            ]
-        })
+    # --- BACK flight ---
+    if best_back:
+        f = best_back['flight']
+        r = best_back['route']
+        _add_flight_row(contents, "BACK", r['date_label'], f)
 
     contents.append({"type": "separator", "margin": "md"})
 
-    # --- TOP PICK (best scored flight per direction) ---
-    contents.append({"type": "text", "text": "TOP PICKS (by score)", "size": "xs",
-                     "weight": "bold", "color": "#0367D3", "margin": "md"})
+    # --- VERDICT ---
+    # Use the route with most data for the verdict
+    best_route = max(all_results, key=lambda r: r.get('scrape_count', 0))
+    scrape_count = best_route.get('scrape_count', 0)
+    avg = best_route.get('avg_price')
+    lowest = best_route.get('lowest_ever')
+    trend = _get_trend(best_route.get('price_history', []))
+    days = _days_until(best_route.get('search_date', ''))
 
-    for direction, routes in [("GO", outbound), ("BACK", inbound)]:
-        for r in routes:
-            scored = [f for f in r.get('flights', []) if f.get('total_score')]
-            if not scored:
-                continue
-            best = max(scored, key=lambda f: f['total_score'])
-            bp = best.get('best_booking_price')
-            price = bp if bp and bp < best['price_thb'] else best['price_thb']
-            src = best.get('best_booking_source', '')
-            dep = best.get('departure_time', '?')
-            arr = best.get('arrival_time', '?')
-            score = best.get('total_score', 0)
+    if best_go:
+        current = _best_price(best_go['flight'])
+    else:
+        current = _best_price(best_back['flight']) if best_back else 0
 
-            price_text = f"฿{price:,}"
-            if src:
-                price_text += f" ({src})"
+    verdict = _compute_verdict(current, avg, lowest, trend, days, scrape_count)
+    verdict_color = "#1DB446" if "BUY" in verdict or "GOOD" in verdict else "#FF8C00" if "WAIT" in verdict else "#E53935"
 
-            score_int = round(score)
-            contents.append({
-                "type": "box", "layout": "vertical", "margin": "sm",
-                "contents": [
-                    {"type": "box", "layout": "horizontal", "contents": [
-                        {"type": "text", "text": f"{direction} {r['date_label']}", "size": "xxs", "color": "#AAAAAA", "flex": 4},
-                        {"type": "text", "text": f"★{score_int}", "size": "xs", "weight": "bold",
-                         "color": "#1DB446" if score_int >= 15 else "#FF8C00", "flex": 1, "align": "end"},
-                    ]},
-                    {"type": "text", "text": f"{price_text}",
-                     "size": "xs", "weight": "bold", "color": "#111111"},
-                    {"type": "text", "text": f"{best['airline'][:18]} {dep}→{arr}",
-                     "size": "xxs", "color": "#999999"},
-                ]
-            })
-
-    # --- TIMESTAMP ---
-    contents.append({"type": "separator", "margin": "md"})
     contents.append({
-        "type": "text", "size": "xxs", "color": "#AAAAAA", "margin": "md",
-        "text": f"Checked: {datetime.now().strftime('%d %b %H:%M')}",
+        "type": "text", "text": verdict, "size": "sm", "weight": "bold",
+        "color": verdict_color, "margin": "md", "wrap": True,
     })
 
+    # Price context line
+    if avg and lowest:
+        contents.append({
+            "type": "text", "size": "xxs", "color": "#999999", "wrap": True,
+            "text": f"Avg ฿{avg:,} | Low ฿{lowest:,} | {trend}" + (f" | {days}d left" if days else ""),
+        })
+    elif scrape_count < 3:
+        contents.append({
+            "type": "text", "size": "xxs", "color": "#999999",
+            "text": f"Check #{scrape_count} — need 3+ for advice",
+        })
+
+    # --- WHERE TO BOOK ---
+    if best_go:
+        src = best_go['flight'].get('best_booking_source', '')
+        if src:
+            contents.append({"type": "separator", "margin": "md"})
+            contents.append({
+                "type": "text", "text": f"Book on: {src}", "size": "xs",
+                "weight": "bold", "color": "#0367D3", "margin": "md",
+            })
+
+    # Timestamp
+    contents.append({
+        "type": "text", "size": "xxs", "color": "#CCCCCC", "margin": "md",
+        "text": datetime.now().strftime('%d %b %H:%M'),
+    })
+
+    return _wrap_summary_bubble(contents)
+
+
+def _pick_best_flight(route_list):
+    """Pick the single best flight across all dates in a direction."""
+    best = None
+    best_route = None
+    for r in route_list:
+        scored = [f for f in r.get('flights', [])
+                  if f.get('total_score') and f.get('is_direct') and not f.get('is_excluded_airline')]
+        if not scored:
+            continue
+        top = max(scored, key=lambda f: f['total_score'])
+        if best is None or top['total_score'] > best['total_score']:
+            best = top
+            best_route = r
+    if best:
+        return {'flight': best, 'route': best_route}
+    return None
+
+
+def _add_flight_row(contents, direction, date_label, f):
+    """Add a compact flight row to the summary."""
+    price = _best_price(f)
+    src = f.get('best_booking_source', '')
+    dep = f.get('departure_time', '?')
+    arr = f.get('arrival_time', '?')
+    dep_apt = f.get('departure_airport', '')
+    arr_apt = f.get('arrival_airport', '')
+    bag = f.get('checked_baggage', '')
+    bag_short = "✓bag" if 'checked' in bag.lower() else "no bag"
+    score_int = round(f.get('total_score', 0))
+
+    contents.append({
+        "type": "box", "layout": "vertical", "margin": "md",
+        "contents": [
+            {"type": "box", "layout": "horizontal", "contents": [
+                {"type": "text", "text": f"{direction} {date_label}",
+                 "size": "xxs", "color": "#AAAAAA", "flex": 4},
+                {"type": "text", "text": f"★{score_int}",
+                 "size": "xs", "weight": "bold",
+                 "color": "#1DB446" if score_int >= 15 else "#FF8C00",
+                 "flex": 1, "align": "end"},
+            ]},
+            {"type": "text", "text": f"฿{price:,} {f['airline'][:18]}",
+             "size": "sm", "weight": "bold"},
+            {"type": "text",
+             "text": f"{dep}({dep_apt})→{arr}({arr_apt}) | {bag_short}",
+             "size": "xxs", "color": "#999999"},
+        ]
+    })
+
+
+def _wrap_summary_bubble(contents):
     return {
         "type": "bubble", "size": "kilo",
         "header": {
             "type": "box", "layout": "vertical",
             "backgroundColor": "#2C2C2C", "paddingAll": "md",
             "contents": [
-                {"type": "text", "text": "BKK ↔ DAD", "color": "#FFFFFF",
-                 "size": "xl", "weight": "bold"},
-                {"type": "text", "text": "Flight Tracker Summary",
-                 "color": "#AAAAAA", "size": "xs"},
+                {"type": "text", "text": "BKK ↔ DAD",
+                 "color": "#FFFFFF", "size": "xl", "weight": "bold"},
             ]
         },
         "body": {
