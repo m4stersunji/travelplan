@@ -54,6 +54,7 @@ def push_to_sheets(route_results):
         ('All Flights', _update_all_flights),
         ('Price History', _update_price_history),
         ('Heatmap', _update_heatmap),
+        ('Dashboard', _update_dashboard),
     ]:
         try:
             fn(sh, route_results)
@@ -248,3 +249,145 @@ def _find_best_combo(outbound, inbound):
     if combos:
         return min(combos, key=lambda c: c['total'])
     return None
+
+
+def _get_eligible_flights(route_result):
+    """Get direct, non-excluded flights with price > 0."""
+    return [f for f in route_result.get('flights', [])
+            if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
+
+
+def _best_flight_price(flight):
+    """Get cheapest available price for a flight."""
+    bp = flight.get('best_booking_price')
+    if bp is not None and bp > 0:
+        return bp
+    return flight['price_thb']
+
+
+def _update_dashboard(sh, route_results):
+    """Dashboard tab — formatted summary for easy sharing."""
+    ws = _get_or_create_sheet(sh, 'Dashboard', [''])
+    ws.clear()
+
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    outbound = [r for r in route_results if r['route'].startswith('BKK')]
+    inbound = [r for r in route_results if r['route'].startswith('DAD')]
+
+    rows = []
+
+    # Title
+    rows.append(['BKK ↔ DAD Flight Dashboard', '', '', '', '', f'Updated: {now}'])
+    rows.append([])
+
+    # === BEST ROUNDTRIP ===
+    combo = _find_best_combo(outbound, inbound)
+    if combo:
+        rows.append(['BEST ROUNDTRIP', '', '', '', '', ''])
+        rows.append([f'฿{combo["total"]:,}', '', f'{combo["out_date"]} + {combo["in_date"]}', '', '', ''])
+        rows.append([])
+
+    # === OUTBOUND ===
+    rows.append(['OUTBOUND: Bangkok → Danang', '', '', '', '', ''])
+    rows.append(['Date', 'Airline', 'Depart', 'Arrive', 'Price (airline)', 'Cheapest (3rd party)', 'Source', 'Baggage', 'Stops'])
+
+    for r in outbound:
+        flights = sorted(r.get('flights', []), key=lambda f: f['price_thb'])[:10]
+        if flights:
+            rows.append([r['date_label'], '---', '---', '---', '---', '---', '---', '---', '---'])
+        for f in flights:
+            bp = f.get('best_booking_price', '')
+            src = f.get('best_booking_source', '')
+            dep_apt = f.get('departure_airport', '')
+            arr_apt = f.get('arrival_airport', '')
+            dep = f"{f.get('departure_time', '')} ({dep_apt})" if dep_apt else f.get('departure_time', '')
+            arr = f"{f.get('arrival_time', '')} ({arr_apt})" if arr_apt else f.get('arrival_time', '')
+            bag = f.get('checked_baggage', '')
+            stops = 'Direct' if f.get('is_direct') else f"{f.get('num_stops', '?')} stop"
+            excluded = ' ⚠️' if f.get('is_excluded_airline') else ''
+
+            rows.append([
+                '',
+                f"{f['airline']}{excluded}",
+                dep,
+                arr,
+                f"฿{f['price_thb']:,}",
+                f"฿{bp:,}" if bp else '',
+                src,
+                bag,
+                stops,
+            ])
+
+    rows.append([])
+
+    # === RETURN ===
+    rows.append(['RETURN: Danang → Bangkok', '', '', '', '', ''])
+    rows.append(['Date', 'Airline', 'Depart', 'Arrive', 'Price (airline)', 'Cheapest (3rd party)', 'Source', 'Baggage', 'Stops'])
+
+    for r in inbound:
+        flights = sorted(r.get('flights', []), key=lambda f: f['price_thb'])[:10]
+        if flights:
+            rows.append([r['date_label'], '---', '---', '---', '---', '---', '---', '---', '---'])
+        for f in flights:
+            bp = f.get('best_booking_price', '')
+            src = f.get('best_booking_source', '')
+            dep_apt = f.get('departure_airport', '')
+            arr_apt = f.get('arrival_airport', '')
+            dep = f"{f.get('departure_time', '')} ({dep_apt})" if dep_apt else f.get('departure_time', '')
+            arr = f"{f.get('arrival_time', '')} ({arr_apt})" if arr_apt else f.get('arrival_time', '')
+            bag = f.get('checked_baggage', '')
+            stops = 'Direct' if f.get('is_direct') else f"{f.get('num_stops', '?')} stop"
+            excluded = ' ⚠️' if f.get('is_excluded_airline') else ''
+
+            rows.append([
+                '',
+                f"{f['airline']}{excluded}",
+                dep,
+                arr,
+                f"฿{f['price_thb']:,}",
+                f"฿{bp:,}" if bp else '',
+                src,
+                bag,
+                stops,
+            ])
+
+    rows.append([])
+
+    # === AIRCRAFT REFERENCE ===
+    rows.append(['AIRCRAFT REFERENCE', '', '', '', '', ''])
+    rows.append(['Aircraft', 'Size', 'Typical Seats', 'Pros', 'Cons'])
+    aircraft_info = [
+        ['A320', 'Narrow-body', '180', 'Common, reliable, modern avionics', 'Smaller overhead bins'],
+        ['A321', 'Narrow-body', '220', 'More legroom variants, newer', 'Can feel crowded if high-density'],
+        ['737-800', 'Narrow-body', '189', 'Workhorse, proven design', 'Older models can be noisy'],
+        ['787', 'Wide-body', '250', 'Quiet, great air pressure, large windows', 'Rare on short routes'],
+        ['777', 'Wide-body', '300-400', 'Very spacious, smooth ride', 'Overkill for short flights'],
+        ['ATR 72', 'Turboprop', '70', 'Efficient for short hops', 'Noisy, slower, smaller'],
+    ]
+    rows.extend(aircraft_info)
+
+    rows.append([])
+    rows.append(['TIP: Create a chart from the "Price History" tab to see trends over time!'])
+
+    # Write all at once
+    ws.update('A1', rows)
+
+    # Format title
+    ws.format('A1', {'textFormat': {'bold': True, 'fontSize': 14}})
+
+    # Format section headers
+    section_rows = []
+    for i, row in enumerate(rows):
+        if row and isinstance(row[0], str) and row[0] in ['BEST ROUNDTRIP', 'OUTBOUND: Bangkok → Danang', 'RETURN: Danang → Bangkok', 'AIRCRAFT REFERENCE']:
+            section_rows.append(i + 1)
+
+    for row_num in section_rows:
+        ws.format(f'A{row_num}:I{row_num}', {
+            'textFormat': {'bold': True},
+            'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.9},
+            'textFormat': {'bold': True, 'foregroundColorStyle': {'rgbColor': {'red': 1, 'green': 1, 'blue': 1}}},
+        })
+
+    # Format combo price big
+    if combo:
+        ws.format('A4', {'textFormat': {'bold': True, 'fontSize': 18, 'foregroundColorStyle': {'rgbColor': {'red': 0.1, 'green': 0.7, 'blue': 0.2}}}})
