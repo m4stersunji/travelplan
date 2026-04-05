@@ -292,46 +292,43 @@ def _build_summary_bubble(outbound, inbound, all_results):
 def _find_best_scored_combo(outbound, inbound):
     """Find the best roundtrip combo by combined score.
 
-    Picks the highest total_score GO + highest total_score BACK,
-    but as a valid roundtrip pair (go_date < back_date).
+    Only considers valid trip pairings from config.VALID_COMBOS.
     """
-    combos = []
+    from config import VALID_COMBOS
 
-    for out_r in outbound:
+    # Index routes by search_date
+    out_by_date = {r['search_date']: r for r in outbound}
+    in_by_date = {r['search_date']: r for r in inbound}
+
+    combos = []
+    for go_date, back_date in VALID_COMBOS:
+        out_r = out_by_date.get(go_date)
+        in_r = in_by_date.get(back_date)
+        if not out_r or not in_r:
+            continue
+
         go_candidates = [f for f in out_r.get('flights', [])
                          if f.get('total_score') and f.get('is_direct') and not f.get('is_excluded_airline')]
-        if not go_candidates:
+        back_candidates = [f for f in in_r.get('flights', [])
+                           if f.get('total_score') and f.get('is_direct') and not f.get('is_excluded_airline')]
+        if not go_candidates or not back_candidates:
             continue
+
         best_go = max(go_candidates, key=lambda f: f['total_score'])
+        best_back = max(back_candidates, key=lambda f: f['total_score'])
 
-        for in_r in inbound:
-            # Ensure return is after departure
-            if in_r.get('search_date', '') <= out_r.get('search_date', ''):
-                continue
-
-            back_candidates = [f for f in in_r.get('flights', [])
-                               if f.get('total_score') and f.get('is_direct') and not f.get('is_excluded_airline')]
-            if not back_candidates:
-                continue
-            best_back = max(back_candidates, key=lambda f: f['total_score'])
-
-            go_price = _best_price(best_go)
-            back_price = _best_price(best_back)
-            combined_score = best_go['total_score'] + best_back['total_score']
-
-            combos.append({
-                'go_flight': best_go,
-                'back_flight': best_back,
-                'go_route': out_r,
-                'back_route': in_r,
-                'total': go_price + back_price,
-                'combined_score': combined_score,
-            })
+        combos.append({
+            'go_flight': best_go,
+            'back_flight': best_back,
+            'go_route': out_r,
+            'back_route': in_r,
+            'total': _best_price(best_go) + _best_price(best_back),
+            'combined_score': best_go['total_score'] + best_back['total_score'],
+        })
 
     if not combos:
         return None
 
-    # Sort by combined score (highest first), break ties by cheapest price
     combos.sort(key=lambda c: (-c['combined_score'], c['total']))
     return combos[0]
 
@@ -396,29 +393,34 @@ def _best_price(flight):
 
 
 def _find_best_combos(outbound, inbound):
-    """Find cheapest roundtrip combinations (direct, non-excluded only)."""
+    """Find cheapest roundtrip combinations — only valid pairings."""
+    from config import VALID_COMBOS
+
+    out_by_date = {r['search_date']: r for r in outbound}
+    in_by_date = {r['search_date']: r for r in inbound}
+
     combos = []
-    for out_r in outbound:
-        out_direct = [f for f in out_r['flights'] if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
-        if not out_direct:
+    for go_date, back_date in VALID_COMBOS:
+        out_r = out_by_date.get(go_date)
+        in_r = in_by_date.get(back_date)
+        if not out_r or not in_r:
             continue
+
+        out_direct = [f for f in out_r['flights'] if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
+        in_direct = [f for f in in_r['flights'] if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
+        if not out_direct or not in_direct:
+            continue
+
         best_out = min(out_direct, key=_best_price)
+        best_in = min(in_direct, key=_best_price)
 
-        for in_r in inbound:
-            in_direct = [f for f in in_r['flights'] if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
-            if not in_direct:
-                continue
-            best_in = min(in_direct, key=_best_price)
-
-            out_p = _best_price(best_out)
-            in_p = _best_price(best_in)
-            combos.append({
-                'total': out_p + in_p,
-                'out_date': out_r['date_label'],
-                'out_price': out_p,
-                'in_date': in_r['date_label'],
-                'in_price': in_p,
-            })
+        combos.append({
+            'total': _best_price(best_out) + _best_price(best_in),
+            'out_date': out_r['date_label'],
+            'out_price': _best_price(best_out),
+            'in_date': in_r['date_label'],
+            'in_price': _best_price(best_in),
+        })
 
     combos.sort(key=lambda c: c['total'])
     return combos

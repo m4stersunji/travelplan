@@ -402,22 +402,28 @@ def _compute_verdict(current, avg, lowest, trend, days_left, scrape_count):
 # ─── Helpers ────────────────────────────────────────────
 
 def _find_best_combo(outbound, inbound):
+    from config import VALID_COMBOS
+
+    out_by_date = {r['search_date']: r for r in outbound}
+    in_by_date = {r['search_date']: r for r in inbound}
+
     combos = []
-    for out_r in outbound:
+    for go_date, back_date in VALID_COMBOS:
+        out_r = out_by_date.get(go_date)
+        in_r = in_by_date.get(back_date)
+        if not out_r or not in_r:
+            continue
         out_direct = _eligible(out_r.get('flights', []))
-        if not out_direct:
+        in_direct = _eligible(in_r.get('flights', []))
+        if not out_direct or not in_direct:
             continue
         best_out = min(out_direct, key=_best_price)
-        for in_r in inbound:
-            in_direct = _eligible(in_r.get('flights', []))
-            if not in_direct:
-                continue
-            best_in = min(in_direct, key=_best_price)
-            combos.append({
-                'total': _best_price(best_out) + _best_price(best_in),
-                'out_date': out_r['date_label'],
-                'in_date': in_r['date_label'],
-            })
+        best_in = min(in_direct, key=_best_price)
+        combos.append({
+            'total': _best_price(best_out) + _best_price(best_in),
+            'out_date': out_r['date_label'],
+            'in_date': in_r['date_label'],
+        })
     if combos:
         return min(combos, key=lambda c: c['total'])
     return None

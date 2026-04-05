@@ -34,3 +34,10 @@ SEARCH_ROUTES = [
     {"origin": "Danang", "destination": "Bangkok", "date": "2026-06-01", "label": "DAD-BKK-Jun01", "route_code": "DAD-BKK"},
     {"origin": "Danang", "destination": "Bangkok", "date": "2026-06-02", "label": "DAD-BKK-Jun02", "route_code": "DAD-BKK"},
 ]
+
+# Valid trip combos (go_date → back_date)
+# Only these pairings are shown as roundtrip options
+VALID_COMBOS = [
+    ("2026-05-29", "2026-06-01"),  # Option A: 29 May → 1 Jun (3 nights)
+    ("2026-05-30", "2026-06-02"),  # Option B: 30 May → 2 Jun (3 nights)
+]
