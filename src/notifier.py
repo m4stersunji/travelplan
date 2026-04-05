@@ -216,52 +216,37 @@ def _build_summary_bubble(outbound, inbound, all_results):
     """
     contents = []
 
-    # Find the best outbound and return flights by total_score
-    best_go = _pick_best_flight(outbound)
-    best_back = _pick_best_flight(inbound)
+    # Find the best roundtrip COMBO (not independent picks)
+    best_combo = _find_best_scored_combo(outbound, inbound)
 
-    if not best_go and not best_back:
+    if not best_combo:
         contents.append({"type": "text", "text": "No flights found", "size": "md"})
         return _wrap_summary_bubble(contents)
 
-    # --- BEST DEAL RIGHT NOW ---
-    # Roundtrip total
-    if best_go and best_back:
-        go_price = _best_price(best_go['flight'])
-        back_price = _best_price(best_back['flight'])
-        total = go_price + back_price
+    go_flight = best_combo['go_flight']
+    back_flight = best_combo['back_flight']
+    total = best_combo['total']
+    go_route = best_combo['go_route']
+    back_route = best_combo['back_route']
 
-        contents.append({"type": "text", "text": "BEST DEAL NOW", "size": "xxs", "color": "#AAAAAA"})
-        contents.append({"type": "text", "text": f"฿{total:,} roundtrip",
-                         "size": "xxl", "weight": "bold", "color": "#1DB446"})
+    # --- BEST DEAL ---
+    contents.append({"type": "text", "text": "BEST DEAL NOW", "size": "xxs", "color": "#AAAAAA"})
+    contents.append({"type": "text", "text": f"฿{total:,} roundtrip",
+                     "size": "xxl", "weight": "bold", "color": "#1DB446"})
 
-    # --- GO flight ---
-    if best_go:
-        f = best_go['flight']
-        r = best_go['route']
-        _add_flight_row(contents, "GO", r['date_label'], f)
-
-    # --- BACK flight ---
-    if best_back:
-        f = best_back['flight']
-        r = best_back['route']
-        _add_flight_row(contents, "BACK", r['date_label'], f)
+    _add_flight_row(contents, "GO", go_route['date_label'], go_flight)
+    _add_flight_row(contents, "BACK", back_route['date_label'], back_flight)
 
     contents.append({"type": "separator", "margin": "md"})
 
     # --- VERDICT ---
-    # Use the route with most data for the verdict
     best_route = max(all_results, key=lambda r: r.get('scrape_count', 0))
     scrape_count = best_route.get('scrape_count', 0)
     avg = best_route.get('avg_price')
     lowest = best_route.get('lowest_ever')
     trend = _get_trend(best_route.get('price_history', []))
     days = _days_until(best_route.get('search_date', ''))
-
-    if best_go:
-        current = _best_price(best_go['flight'])
-    else:
-        current = _best_price(best_back['flight']) if best_back else 0
+    current = _best_price(go_flight)
 
     verdict = _compute_verdict(current, avg, lowest, trend, days, scrape_count)
     verdict_color = "#1DB446" if "BUY" in verdict or "GOOD" in verdict else "#FF8C00" if "WAIT" in verdict else "#E53935"
@@ -284,8 +269,10 @@ def _build_summary_bubble(outbound, inbound, all_results):
         })
 
     # --- WHERE TO BOOK ---
-    if best_go:
-        src = best_go['flight'].get('best_booking_source', '')
+    go_src = go_flight.get('best_booking_source', '')
+    back_src = back_flight.get('best_booking_source', '')
+    if go_src or back_src:
+        src = go_src or back_src
         if src:
             contents.append({"type": "separator", "margin": "md"})
             contents.append({
@@ -302,22 +289,51 @@ def _build_summary_bubble(outbound, inbound, all_results):
     return _wrap_summary_bubble(contents)
 
 
-def _pick_best_flight(route_list):
-    """Pick the single best flight across all dates in a direction."""
-    best = None
-    best_route = None
-    for r in route_list:
-        scored = [f for f in r.get('flights', [])
-                  if f.get('total_score') and f.get('is_direct') and not f.get('is_excluded_airline')]
-        if not scored:
+def _find_best_scored_combo(outbound, inbound):
+    """Find the best roundtrip combo by combined score.
+
+    Picks the highest total_score GO + highest total_score BACK,
+    but as a valid roundtrip pair (go_date < back_date).
+    """
+    combos = []
+
+    for out_r in outbound:
+        go_candidates = [f for f in out_r.get('flights', [])
+                         if f.get('total_score') and f.get('is_direct') and not f.get('is_excluded_airline')]
+        if not go_candidates:
             continue
-        top = max(scored, key=lambda f: f['total_score'])
-        if best is None or top['total_score'] > best['total_score']:
-            best = top
-            best_route = r
-    if best:
-        return {'flight': best, 'route': best_route}
-    return None
+        best_go = max(go_candidates, key=lambda f: f['total_score'])
+
+        for in_r in inbound:
+            # Ensure return is after departure
+            if in_r.get('search_date', '') <= out_r.get('search_date', ''):
+                continue
+
+            back_candidates = [f for f in in_r.get('flights', [])
+                               if f.get('total_score') and f.get('is_direct') and not f.get('is_excluded_airline')]
+            if not back_candidates:
+                continue
+            best_back = max(back_candidates, key=lambda f: f['total_score'])
+
+            go_price = _best_price(best_go)
+            back_price = _best_price(best_back)
+            combined_score = best_go['total_score'] + best_back['total_score']
+
+            combos.append({
+                'go_flight': best_go,
+                'back_flight': best_back,
+                'go_route': out_r,
+                'back_route': in_r,
+                'total': go_price + back_price,
+                'combined_score': combined_score,
+            })
+
+    if not combos:
+        return None
+
+    # Sort by combined score (highest first), break ties by cheapest price
+    combos.sort(key=lambda c: (-c['combined_score'], c['total']))
+    return combos[0]
 
 
 def _add_flight_row(contents, direction, date_label, f):
