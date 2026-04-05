@@ -139,8 +139,15 @@ def _build_route_bubble(route_data, direction, color, top_n):
         cabin_short = cabin.replace(' carry-on', '')
         bag_short = f"{cabin_short}/{checked_short}"
 
-        # Price color
-        price_color = "#999999" if f.get('is_excluded_airline') else "#111111"
+        # Best booking price (3rd party may be cheaper)
+        best_price = f.get('best_booking_price')
+        best_source = f.get('best_booking_source', '')
+        if best_price and best_price < f['price_thb']:
+            price_line = f"฿{best_price:,} via {best_source}"
+            price_color = "#1DB446"  # Green for savings
+        else:
+            price_line = price
+            price_color = "#999999" if f.get('is_excluded_airline') else "#111111"
 
         flight_rows.append({
             "type": "box", "layout": "vertical", "spacing": "xs",
@@ -149,10 +156,10 @@ def _build_route_bubble(route_data, direction, color, top_n):
                 {
                     "type": "box", "layout": "horizontal",
                     "contents": [
-                        {"type": "text", "text": price, "size": "md", "weight": "bold",
-                         "color": price_color, "flex": 3},
+                        {"type": "text", "text": price_line, "size": "md", "weight": "bold",
+                         "color": price_color, "flex": 5},
                         {"type": "text", "text": f"{airline}{excluded}",
-                         "size": "xs", "color": "#666666", "flex": 5, "align": "end"},
+                         "size": "xs", "color": "#666666", "flex": 4, "align": "end"},
                     ]
                 },
                 {
@@ -254,6 +261,14 @@ def _build_summary_bubble(outbound, inbound, all_results):
     }
 
 
+def _best_price(flight):
+    """Get the cheapest price for a flight (booking or listed)."""
+    bp = flight.get('best_booking_price')
+    if bp and bp < flight['price_thb']:
+        return bp
+    return flight['price_thb']
+
+
 def _find_best_combos(outbound, inbound):
     """Find cheapest roundtrip combinations (direct, non-excluded only)."""
     combos = []
@@ -261,20 +276,22 @@ def _find_best_combos(outbound, inbound):
         out_direct = [f for f in out_r['flights'] if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
         if not out_direct:
             continue
-        best_out = min(out_direct, key=lambda f: f['price_thb'])
+        best_out = min(out_direct, key=_best_price)
 
         for in_r in inbound:
             in_direct = [f for f in in_r['flights'] if f.get('is_direct') and not f.get('is_excluded_airline') and f['price_thb'] > 0]
             if not in_direct:
                 continue
-            best_in = min(in_direct, key=lambda f: f['price_thb'])
+            best_in = min(in_direct, key=_best_price)
 
+            out_p = _best_price(best_out)
+            in_p = _best_price(best_in)
             combos.append({
-                'total': best_out['price_thb'] + best_in['price_thb'],
+                'total': out_p + in_p,
                 'out_date': out_r['date_label'],
-                'out_price': best_out['price_thb'],
+                'out_price': out_p,
                 'in_date': in_r['date_label'],
-                'in_price': best_in['price_thb'],
+                'in_price': in_p,
             })
 
     combos.sort(key=lambda c: c['total'])

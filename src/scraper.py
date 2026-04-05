@@ -85,7 +85,13 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
         _expand_flight_groups(driver)
 
         page_source = driver.page_source
-        return parse_flight_data(page_source)
+        flights = parse_flight_data(page_source)
+
+        # Get booking options for cheapest direct flight
+        if flights:
+            _enrich_booking_options(driver, flights)
+
+        return flights
 
     except TimeoutException as exc:
         logger.error("Page load timed out: %s", exc)
@@ -183,6 +189,100 @@ def parse_flight_data(page_source: str) -> list:
 
     logger.info(f"Parsed {len(flights)} unique flights from aria-labels")
     return flights
+
+
+def _enrich_booking_options(driver, flights):
+    """Click top direct flights to get 3rd party booking prices.
+    Enriches flight dicts with 'booking_options' and 'best_booking_price'.
+    """
+    import time
+
+    # Sort by price, get top 3 direct non-excluded flights to check
+    direct = [f for f in flights if f.get('num_stops', 1) == 0]
+    direct.sort(key=lambda f: f['price_thb'])
+    to_check = direct[:3]
+
+    for flight in to_check:
+        price = flight['price_thb']
+        dep_time_12h = _to_12h(flight.get('departure_time', ''))
+        if not dep_time_12h:
+            continue
+
+        try:
+            # Find and click the flight link using JS
+            js = f'''
+            var links = document.querySelectorAll('[role="link"][aria-label*="{price} Thai baht"]');
+            for (var l of links) {{
+                var label = l.getAttribute('aria-label') || '';
+                if (label.includes('{dep_time_12h}')) {{
+                    l.click();
+                    return true;
+                }}
+            }}
+            return false;
+            '''
+            clicked = driver.execute_script(js)
+            if not clicked:
+                continue
+
+            time.sleep(2.5)
+
+            # Extract booking options from visible text
+            body_text = driver.find_element(By.TAG_NAME, 'body').text
+            bookings = _parse_booking_text(body_text)
+
+            if bookings:
+                flight['booking_options'] = bookings
+                cheapest = min(bookings, key=lambda x: x[1])
+                flight['best_booking_price'] = cheapest[1]
+                flight['best_booking_source'] = cheapest[0]
+                logger.info(f"Booking: {flight['airline']} ฿{price:,} → best ฿{cheapest[1]:,} via {cheapest[0]}")
+
+            # Toggle close by clicking same element again
+            driver.execute_script(js)
+            time.sleep(1)
+
+        except Exception as e:
+            logger.debug(f"Booking check failed for {flight.get('airline')}: {e}")
+            continue
+
+
+def _parse_booking_text(body_text):
+    """Parse 'Book with X / THB Y' pairs from page text."""
+    lines = body_text.split('\n')
+    bookings = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith('Book with ') or line.startswith('Book on '):
+            source = line.replace('Book with ', '').replace('Book on ', '').replace('Airline', '').strip()
+            for j in range(i + 1, min(i + 5, len(lines))):
+                nxt = lines[j].strip()
+                if nxt.startswith('Includes'):
+                    continue
+                pm = re.match(r'THB ([\d,]+)', nxt)
+                if pm:
+                    bookings.append((source, int(pm.group(1).replace(',', ''))))
+                    break
+        i += 1
+    return bookings
+
+
+def _to_12h(time_24h):
+    """Convert '07:50' to '7:50 AM' for matching Google Flights labels."""
+    if not time_24h:
+        return ''
+    try:
+        h, m = time_24h.split(':')
+        h = int(h)
+        period = 'AM' if h < 12 else 'PM'
+        if h == 0:
+            h = 12
+        elif h > 12:
+            h -= 12
+        return f'{h}:{m} {period}'
+    except (ValueError, AttributeError):
+        return ''
 
 
 def _expand_flight_groups(driver):
