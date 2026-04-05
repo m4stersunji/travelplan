@@ -4,7 +4,7 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from main import process_route
 
 
@@ -22,9 +22,7 @@ def test_process_route_with_mock_scraper():
         db_path = os.path.join(tmpdir, 'test.db')
         data_dir = tmpdir
 
-        with patch('main.scrape_flights', return_value=mock_flights), \
-             patch('main.send_line_notification', return_value=True) as mock_notify:
-
+        with patch('main.scrape_flights', return_value=mock_flights):
             from database import init_db
             init_db(db_path)
 
@@ -33,8 +31,9 @@ def test_process_route_with_mock_scraper():
                 label='BKK-DAD-May29', db_path=db_path, data_dir=data_dir
             )
 
-            assert result is True
-            mock_notify.assert_called_once()
+            assert result['success'] is True
+            assert len(result['flights']) == 1
+            assert result['route'] == 'BKK-DAD'
 
 
 def test_process_route_scraper_fails():
@@ -51,4 +50,4 @@ def test_process_route_scraper_fails():
                 label='BKK-DAD-May29', db_path=db_path, data_dir=data_dir
             )
 
-            assert result is False
+            assert result['success'] is False

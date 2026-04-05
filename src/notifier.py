@@ -1,5 +1,6 @@
 import logging
 import requests
+from datetime import datetime
 
 from config import LINE_CHANNEL_ACCESS_TOKEN, LINE_USER_ID
 
@@ -37,69 +38,132 @@ def send_line_notification(message):
 
 def format_price_change(current_price, previous_price):
     if previous_price is None:
-        return "🆕 NEW"
+        return "NEW"
     diff = current_price - previous_price
     if diff < 0:
-        return f"▼ -{abs(diff):,}"
+        return f"▼{abs(diff):,}"
     elif diff > 0:
-        return f"▲ +{diff:,}"
+        return f"▲{diff:,}"
     else:
-        return "— same"
+        return "="
 
 
-def format_notification_message(route, search_date, flights, prev_best_price,
-                                lowest_ever, scrape_count):
-    if not flights:
-        return f"✈️ {route} {search_date}\n\n❌ No flights found this check."
+def format_combined_message(route_results, top_n=5):
+    """Format a single combined message for all route/date combos.
 
-    direct_flights = [f for f in flights if f['is_direct'] and not f['is_excluded_airline']]
-    other_flights = [f for f in flights if not f['is_direct'] or f['is_excluded_airline']]
+    route_results: list of dicts with keys:
+        route, search_date, date_label, flights, prev_best, lowest_ever,
+        scrape_count, price_history
+    """
+    lines = [f"BKK-DAD Price Update"]
+    lines.append(f"{datetime.now().strftime('%d %b %H:%M')}")
+    lines.append("")
 
-    direct_flights.sort(key=lambda f: f['price_thb'])
-    other_flights.sort(key=lambda f: f['price_thb'])
+    # Group by direction
+    outbound = [r for r in route_results if r['route'].startswith('BKK')]
+    inbound = [r for r in route_results if r['route'].startswith('DAD')]
 
-    lines = [f"✈️ Flight Price Update — {route} {search_date}", ""]
-
-    if direct_flights:
-        best = direct_flights[0]
-        change = format_price_change(best['price_thb'], prev_best_price)
-        is_lowest = best['price_thb'] <= lowest_ever if lowest_ever else True
-
-        lines.append(f"🏆 Best Deal: {best['airline']} | {best['flight_number']}")
-        lines.append(f"   ฿{best['price_thb']:,} ({change})")
-        if is_lowest:
-            lines.append("   ⭐ LOWEST EVER")
-        lines.append(f"   Depart {best['departure_time']} → Arrive {best['arrival_time']}")
-        lines.append(f"   Aircraft: {best['aircraft_type'] or 'N/A'}")
-        lines.append("")
-
-        if len(direct_flights) > 1:
-            lines.append("📊 Other Direct Flights:")
-            for f in direct_flights[1:]:
-                change = format_price_change(f['price_thb'], prev_best_price)
-                pref = " ⏰" if f['is_preferred_time'] else ""
-                lines.append(
-                    f"   {f['airline']} {f['flight_number']} | "
-                    f"฿{f['price_thb']:,} ({change}) | "
-                    f"{f['departure_time']}→{f['arrival_time']} | "
-                    f"{f['aircraft_type'] or 'N/A'}{pref}"
-                )
+    # --- OUTBOUND ---
+    if outbound:
+        lines.append("OUTBOUND BKK > DAD")
+        lines.append("-" * 28)
+        for r in outbound:
+            lines.append(f"  {r['date_label']}")
+            all_flights = sorted(r['flights'], key=lambda f: f['price_thb'])[:top_n]
+            if not all_flights:
+                lines.append("  No flights found")
+            for f in all_flights:
+                price = f"฿{f['price_thb']:,}"
+                change = format_price_change(f['price_thb'], r['prev_best'])
+                direct = "" if f['is_direct'] else f" ({f['num_stops']}stop)"
+                excluded = " *" if f['is_excluded_airline'] else ""
+                pref = " <<" if f.get('is_preferred_time') else ""
+                airline = f['airline'][:18]
+                lines.append(f"  {price:>8} {change:>6} {airline}{direct}{excluded}{pref}")
             lines.append("")
 
-    if other_flights:
-        lines.append("📌 With Stops / Excluded Airlines (FYI):")
-        for f in other_flights:
-            stop_info = f"({f['num_stops']} stop)" if f['num_stops'] > 0 else "(direct)"
-            lines.append(
-                f"   {f['airline']} {f['flight_number']} | "
-                f"฿{f['price_thb']:,} {stop_info} | "
-                f"{f['departure_time']}→{f['arrival_time']} | "
-                f"{f['aircraft_type'] or 'N/A'}"
-            )
+    # --- INBOUND ---
+    if inbound:
+        lines.append("RETURN DAD > BKK")
+        lines.append("-" * 28)
+        for r in inbound:
+            lines.append(f"  {r['date_label']}")
+            all_flights = sorted(r['flights'], key=lambda f: f['price_thb'])[:top_n]
+            if not all_flights:
+                lines.append("  No flights found")
+            for f in all_flights:
+                price = f"฿{f['price_thb']:,}"
+                change = format_price_change(f['price_thb'], r['prev_best'])
+                direct = "" if f['is_direct'] else f" ({f['num_stops']}stop)"
+                excluded = " *" if f['is_excluded_airline'] else ""
+                airline = f['airline'][:18]
+                lines.append(f"  {price:>8} {change:>6} {airline}{direct}{excluded}")
+            lines.append("")
+
+    # --- BEST COMBO ---
+    best_combos = _find_best_combos(outbound, inbound)
+    if best_combos:
+        lines.append("BEST ROUNDTRIP")
+        lines.append("-" * 28)
+        for combo in best_combos[:3]:
+            lines.append(f"  ฿{combo['total']:,} = {combo['out_date']} ฿{combo['out_price']:,} + {combo['in_date']} ฿{combo['in_price']:,}")
         lines.append("")
 
-    from datetime import datetime
-    lines.append(f"🕐 Checked: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    lines.append(f"📈 Tracking: {scrape_count} checks so far")
+    # --- HISTORICAL SUMMARY ---
+    lines.append("HISTORY")
+    lines.append("-" * 28)
+    for r in route_results:
+        if r['lowest_ever'] is not None:
+            trend = _get_trend(r.get('price_history', []))
+            lines.append(f"  {r['date_label']}: low ฿{r['lowest_ever']:,} {trend} ({r['scrape_count']} checks)")
+    lines.append("")
+
+    # Legend
+    lines.append("* = excluded airline | << = preferred time")
 
     return "\n".join(lines)
+
+
+def _find_best_combos(outbound, inbound):
+    """Find cheapest roundtrip combinations."""
+    combos = []
+    for out_r in outbound:
+        out_direct = [f for f in out_r['flights'] if f['is_direct'] and not f['is_excluded_airline'] and f['price_thb'] > 0]
+        if not out_direct:
+            continue
+        best_out = min(out_direct, key=lambda f: f['price_thb'])
+
+        for in_r in inbound:
+            in_direct = [f for f in in_r['flights'] if f['is_direct'] and not f['is_excluded_airline'] and f['price_thb'] > 0]
+            if not in_direct:
+                continue
+            best_in = min(in_direct, key=lambda f: f['price_thb'])
+
+            combos.append({
+                'total': best_out['price_thb'] + best_in['price_thb'],
+                'out_date': out_r['date_label'],
+                'out_price': best_out['price_thb'],
+                'in_date': in_r['date_label'],
+                'in_price': best_in['price_thb'],
+            })
+
+    combos.sort(key=lambda c: c['total'])
+    return combos
+
+
+def _get_trend(price_history):
+    """Simple trend from recent price history."""
+    if len(price_history) < 2:
+        return ""
+    prices = [h['best_price'] for h in price_history if h['best_price'] is not None]
+    if len(prices) < 2:
+        return ""
+    # Compare newest vs oldest in history
+    newest = prices[0]
+    oldest = prices[-1]
+    if newest < oldest:
+        return "trending down"
+    elif newest > oldest:
+        return "trending up"
+    else:
+        return "stable"

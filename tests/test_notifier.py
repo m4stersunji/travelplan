@@ -2,7 +2,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from notifier import format_price_change, format_notification_message
+from notifier import format_price_change, format_combined_message
 
 
 def test_format_price_change_decrease():
@@ -19,7 +19,7 @@ def test_format_price_change_increase():
 
 def test_format_price_change_same():
     result = format_price_change(3600, 3600)
-    assert '—' in result
+    assert '=' in result
 
 
 def test_format_price_change_no_previous():
@@ -27,28 +27,50 @@ def test_format_price_change_no_previous():
     assert 'NEW' in result
 
 
-def test_format_notification_message():
-    flights = [
+def test_format_combined_message():
+    route_results = [
         {
-            'airline': 'Thai AirAsia', 'flight_number': 'FD636',
-            'departure_time': '10:15', 'arrival_time': '12:15',
-            'price_thb': 3250, 'aircraft_type': 'A320', 'num_stops': 0,
-            'is_direct': True, 'is_excluded_airline': False, 'is_preferred_time': True,
+            'route': 'BKK-DAD', 'search_date': '2026-05-29', 'date_label': '29 May',
+            'flights': [
+                {'airline': 'Vietnam Airlines', 'flight_number': '', 'departure_time': '18:05',
+                 'arrival_time': '19:45', 'price_thb': 5335, 'aircraft_type': '', 'num_stops': 0,
+                 'is_direct': True, 'is_excluded_airline': False, 'is_preferred_time': False},
+                {'airline': 'Emirates', 'flight_number': '', 'departure_time': '20:10',
+                 'arrival_time': '21:50', 'price_thb': 5935, 'aircraft_type': '', 'num_stops': 0,
+                 'is_direct': True, 'is_excluded_airline': True, 'is_preferred_time': False},
+            ],
+            'prev_best': 5500, 'lowest_ever': 5335, 'scrape_count': 3,
+            'price_history': [{'best_price': 5335}, {'best_price': 5500}],
         },
         {
-            'airline': 'Emirates', 'flight_number': 'EK374',
-            'departure_time': '08:00', 'arrival_time': '16:30',
-            'price_thb': 2900, 'aircraft_type': '777', 'num_stops': 1,
-            'is_direct': False, 'is_excluded_airline': True, 'is_preferred_time': False,
+            'route': 'DAD-BKK', 'search_date': '2026-06-01', 'date_label': '01 Jun',
+            'flights': [
+                {'airline': 'Vietnam Airlines', 'flight_number': '', 'departure_time': '10:00',
+                 'arrival_time': '11:40', 'price_thb': 4508, 'aircraft_type': '', 'num_stops': 0,
+                 'is_direct': True, 'is_excluded_airline': False, 'is_preferred_time': False},
+            ],
+            'prev_best': 4700, 'lowest_ever': 4508, 'scrape_count': 3,
+            'price_history': [{'best_price': 4508}, {'best_price': 4700}],
         },
     ]
-    msg = format_notification_message(
-        route='BKK→DAD', search_date='29 May',
-        flights=flights, prev_best_price=3600,
-        lowest_ever=3250, scrape_count=10
-    )
-    assert 'Thai AirAsia' in msg
-    assert 'FD636' in msg
-    assert '3,250' in msg
+    msg = format_combined_message(route_results)
+    assert 'BKK' in msg
+    assert 'Vietnam Airlines' in msg
+    assert '5,335' in msg
     assert 'Emirates' in msg
-    assert 'LOWEST EVER' in msg or '⭐' in msg
+    assert 'BEST ROUNDTRIP' in msg
+    assert '9,843' in msg  # 5335 + 4508
+    assert 'HISTORY' in msg
+    assert 'trending down' in msg
+
+
+def test_format_combined_message_no_flights():
+    route_results = [
+        {
+            'route': 'BKK-DAD', 'search_date': '2026-05-29', 'date_label': '29 May',
+            'flights': [], 'prev_best': None, 'lowest_ever': None,
+            'scrape_count': 0, 'price_history': [],
+        },
+    ]
+    msg = format_combined_message(route_results)
+    assert 'No flights found' in msg

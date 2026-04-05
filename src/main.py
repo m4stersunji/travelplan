@@ -4,9 +4,9 @@ import sys
 from datetime import datetime
 
 from config import SEARCH_ROUTES, EXCLUDED_AIRLINES, PREFERRED_DEPARTURE_START, PREFERRED_DEPARTURE_END, DB_PATH, DATA_DIR, LOG_DIR
-from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert
+from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history
 from scraper import scrape_flights, classify_flight
-from notifier import send_line_notification, format_notification_message
+from notifier import send_line_notification, format_combined_message
 from exporter import export_flights_to_csv
 
 logger = logging.getLogger(__name__)
@@ -26,14 +26,20 @@ def setup_logging():
 
 
 def process_route(origin, destination, date, label, db_path, data_dir):
+    """Process a single route. Returns a result dict for combined notification."""
     route = f"{origin}-{destination}"
+    date_label = datetime.strptime(date, '%Y-%m-%d').strftime('%d %b')
 
     raw_flights = scrape_flights(origin, destination, date)
 
     if not raw_flights:
         logger.warning(f"No flights found for {route} on {date}")
         insert_scrape_run(db_path, route=route, search_date=date, status='error')
-        return False
+        return {
+            'route': route, 'search_date': date, 'date_label': date_label,
+            'flights': [], 'prev_best': None, 'lowest_ever': None,
+            'scrape_count': 0, 'price_history': [], 'success': False,
+        }
 
     flights = []
     for f in raw_flights:
@@ -56,6 +62,7 @@ def process_route(origin, destination, date, label, db_path, data_dir):
     prev_best = get_previous_best_price(db_path, route, date)
     lowest_ever = get_lowest_ever_price(db_path, route, date)
     scrape_count = get_scrape_count(db_path, route, date)
+    price_history = get_price_history(db_path, route, date, limit=10)
 
     direct_prices = [f['price_thb'] for f in flights if f['is_direct'] and not f['is_excluded_airline'] and f['price_thb'] > 0]
     current_best = min(direct_prices) if direct_prices else None
@@ -63,22 +70,19 @@ def process_route(origin, destination, date, label, db_path, data_dir):
 
     insert_price_alert(db_path, run_id, route, date, current_best, prev_best, is_lowest)
 
-    date_label = datetime.strptime(date, '%Y-%m-%d').strftime('%d %b')
-    route_display = f"{origin}→{destination}"
-    message = format_notification_message(
-        route=route_display, search_date=date_label,
-        flights=flights, prev_best_price=prev_best,
-        lowest_ever=lowest_ever, scrape_count=scrape_count,
-    )
-    send_line_notification(message)
-
+    # Export CSV
     os.makedirs(data_dir, exist_ok=True)
     scraped_at = datetime.now().isoformat()
     flights_with_timestamp = [{**f, 'scraped_at': scraped_at} for f in flights]
     export_flights_to_csv(data_dir, route, date, flights_with_timestamp)
 
-    logger.info(f"Done {route} {date}: {len(flights)} flights, best ฿{current_best:,}" if current_best else f"Done {route} {date}: {len(flights)} flights (no direct non-excluded)")
-    return True
+    logger.info(f"Done {route} {date}: {len(flights)} flights, best ฿{current_best:,}" if current_best else f"Done {route} {date}: {len(flights)} flights")
+
+    return {
+        'route': route, 'search_date': date, 'date_label': date_label,
+        'flights': flights, 'prev_best': prev_best, 'lowest_ever': lowest_ever,
+        'scrape_count': scrape_count, 'price_history': price_history, 'success': True,
+    }
 
 
 def main():
@@ -90,9 +94,10 @@ def main():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     init_db(DB_PATH)
 
-    results = []
+    # Collect all results
+    route_results = []
     for route in SEARCH_ROUTES:
-        success = process_route(
+        result = process_route(
             origin=route['origin'],
             destination=route['destination'],
             date=route['date'],
@@ -100,12 +105,21 @@ def main():
             db_path=DB_PATH,
             data_dir=DATA_DIR,
         )
-        results.append((route['label'], success))
+        route_results.append(result)
 
+    # Send ONE combined LINE notification
+    successful = [r for r in route_results if r['success']]
+    if successful:
+        message = format_combined_message(successful)
+        send_line_notification(message)
+    else:
+        logger.warning("No successful scrapes — skipping notification")
+
+    # Summary log
     logger.info("=" * 60)
-    for label, success in results:
-        status = "OK" if success else "FAIL"
-        logger.info(f"  {status} {label}")
+    for r in route_results:
+        status = "OK" if r['success'] else "FAIL"
+        logger.info(f"  {status} {r['route']} {r['search_date']}")
     logger.info("=" * 60)
     logger.info("Done.")
 

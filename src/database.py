@@ -128,6 +128,24 @@ def get_scrape_count(db_path, route, search_date):
     return row[0]
 
 
+def get_price_history(db_path, route, search_date, limit=10):
+    """Get recent best prices for trend analysis (direct, non-excluded only)."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT sr.scraped_at, MIN(f.price_thb) as best_price
+        FROM flights f
+        JOIN scrape_runs sr ON f.scrape_run_id = sr.id
+        WHERE sr.route = ? AND sr.search_date = ? AND sr.status = 'success'
+          AND f.is_direct = 1 AND f.is_excluded_airline = 0
+        GROUP BY sr.id
+        ORDER BY sr.scraped_at DESC
+        LIMIT ?
+    """, (route, search_date, limit)).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def insert_price_alert(db_path, scrape_run_id, route, search_date,
                        best_price_thb, prev_price_thb, is_lowest_ever):
     conn = sqlite3.connect(db_path)
