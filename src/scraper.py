@@ -81,6 +81,9 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
         except TimeoutException:
             logger.warning("Timed out waiting for flight results to load; parsing what we have")
 
+        # Expand grouped flights (Google Flights groups by airline, hiding some)
+        _expand_flight_groups(driver)
+
         page_source = driver.page_source
         return parse_flight_data(page_source)
 
@@ -160,6 +163,8 @@ def parse_flight_data(page_source: str) -> list:
         # Extract aircraft type if present in the details
         aircraft_type = extract_aircraft(details)
 
+        cabin, checked, svc_type = get_baggage_info(airline)
+
         flights.append({
             "airline": airline,
             "flight_number": '',
@@ -171,10 +176,64 @@ def parse_flight_data(page_source: str) -> list:
             "price_thb": price_thb,
             "aircraft_type": aircraft_type,
             "num_stops": num_stops,
+            "cabin_baggage": cabin,
+            "checked_baggage": checked,
+            "service_type": svc_type,
         })
 
     logger.info(f"Parsed {len(flights)} unique flights from aria-labels")
     return flights
+
+
+def _expand_flight_groups(driver):
+    """Click to expand grouped flights on Google Flights.
+    Google groups flights by airline — clicking expands to show all departure times.
+    """
+    import time
+    try:
+        # Find expandable flight rows and click them
+        expandable = driver.find_elements(
+            By.CSS_SELECTOR,
+            '[aria-label*="Thai baht"][role="button"], [aria-expanded="false"][aria-label*="flight"]'
+        )
+        for el in expandable[:10]:  # Limit to avoid infinite clicking
+            try:
+                el.click()
+                time.sleep(0.5)
+            except Exception:
+                continue
+        time.sleep(2)
+    except Exception as e:
+        logger.debug(f"Expand groups failed (non-fatal): {e}")
+
+
+# Airline baggage info: (cabin_kg, checked_kg, note)
+AIRLINE_BAGGAGE = {
+    "thai airasia": ("7kg carry-on", "No checked bag", "Budget"),
+    "airasia": ("7kg carry-on", "No checked bag", "Budget"),
+    "vietjet": ("7kg carry-on", "No checked bag", "Budget"),
+    "vietnam airlines": ("10kg carry-on", "23kg checked", "Full service"),
+    "emirates": ("7kg carry-on", "30kg checked", "Full service"),
+    "cathay pacific": ("7kg carry-on", "25kg checked", "Full service"),
+    "malaysia airlines": ("7kg carry-on", "25kg checked", "Full service"),
+    "philippine airlines": ("7kg carry-on", "25kg checked", "Full service"),
+    "batik air": ("7kg carry-on", "20kg checked", "Full service"),
+    "thai": ("7kg carry-on", "30kg checked", "Full service"),
+    "bangkok airways": ("7kg carry-on", "20kg checked", "Full service"),
+    "china airlines": ("7kg carry-on", "23kg checked", "Full service"),
+    "eva air": ("7kg carry-on", "23kg checked", "Full service"),
+    "jeju air": ("10kg carry-on", "No checked bag", "Budget"),
+}
+
+
+def get_baggage_info(airline_name):
+    """Look up baggage allowance for an airline. Returns (cabin, checked, type)."""
+    name_lower = airline_name.lower().strip()
+    # Try exact match first, then partial
+    for key, info in AIRLINE_BAGGAGE.items():
+        if key in name_lower:
+            return info
+    return ("7kg carry-on", "Check airline", "Unknown")
 
 
 def classify_flight(flight, excluded_airlines):

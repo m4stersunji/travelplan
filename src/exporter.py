@@ -5,9 +5,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 CSV_FIELDS = [
-    'scraped_at', 'airline', 'flight_number', 'departure_time', 'arrival_time',
+    'scraped_at', 'airline', 'flight_number',
+    'departure_airport', 'departure_time', 'arrival_airport', 'arrival_time',
     'duration_minutes', 'price_thb', 'aircraft_type', 'num_stops',
-    'is_direct', 'is_excluded_airline', 'is_preferred_time',
+    'is_direct', 'is_excluded_airline',
+    'cabin_baggage', 'checked_baggage', 'service_type',
 ]
 
 

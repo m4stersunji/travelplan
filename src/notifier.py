@@ -130,8 +130,10 @@ def _build_route_bubble(route_data, direction, color, top_n):
         arr_apt = f.get('arrival_airport', '')
         time_str = f"{dep}({dep_apt})→{arr}({arr_apt})" if dep_apt else f"{dep}→{arr}"
 
-        stops = "" if f.get('is_direct') else f" {f['num_stops']}stop"
+        stops = "" if f.get('is_direct') else f" | {f['num_stops']}stop"
         excluded = " ⚠️" if f.get('is_excluded_airline') else ""
+        baggage = f.get('checked_baggage', '')
+        bag_short = "✓bag" if 'checked' in baggage.lower() else "no bag"
 
         # Price color
         price_color = "#999999" if f.get('is_excluded_airline') else "#111111"
@@ -145,13 +147,18 @@ def _build_route_bubble(route_data, direction, color, top_n):
                     "contents": [
                         {"type": "text", "text": price, "size": "md", "weight": "bold",
                          "color": price_color, "flex": 3},
-                        {"type": "text", "text": f"{airline}{stops}{excluded}",
+                        {"type": "text", "text": f"{airline}{excluded}",
                          "size": "xs", "color": "#666666", "flex": 5, "align": "end"},
                     ]
                 },
                 {
-                    "type": "text", "text": time_str,
-                    "size": "xxs", "color": "#AAAAAA",
+                    "type": "box", "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": time_str,
+                         "size": "xxs", "color": "#AAAAAA", "flex": 5},
+                        {"type": "text", "text": f"{bag_short}{stops}",
+                         "size": "xxs", "color": "#AAAAAA", "flex": 3, "align": "end"},
+                    ]
                 },
             ]
         })
