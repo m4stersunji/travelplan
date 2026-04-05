@@ -132,8 +132,12 @@ def _build_route_bubble(route_data, direction, color, top_n):
 
         stops = "" if f.get('is_direct') else f" | {f['num_stops']}stop"
         excluded = " ⚠️" if f.get('is_excluded_airline') else ""
-        baggage = f.get('checked_baggage', '')
-        bag_short = "✓bag" if 'checked' in baggage.lower() else "no bag"
+        cabin = f.get('cabin_baggage', '7kg')
+        checked = f.get('checked_baggage', '?')
+        # Show "7kg/23kg" or "7kg/no bag"
+        checked_short = checked.replace(' checked', '').replace('No checked bag', 'no bag')
+        cabin_short = cabin.replace(' carry-on', '')
+        bag_short = f"{cabin_short}/{checked_short}"
 
         # Price color
         price_color = "#999999" if f.get('is_excluded_airline') else "#111111"
