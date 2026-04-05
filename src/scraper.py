@@ -573,3 +573,77 @@ def extract_aircraft(text: str) -> str:
             return match.group(0).strip()
 
     return ""
+
+
+def score_flights(flights, route_direction='outbound'):
+    """Score flights by price (0-10) and time preference (0-10).
+
+    Time preference:
+    - Outbound: depart mid-day (10:00-14:00) is best
+    - Return to BKK: arrive ~18:00 is best
+
+    Returns flights with 'price_score', 'time_score', 'total_score' added.
+    """
+    if not flights:
+        return flights
+
+    # Price score: cheapest gets 10, most expensive gets 0
+    prices = [f['price_thb'] for f in flights if f['price_thb'] > 0]
+    if not prices:
+        return flights
+    min_p = min(prices)
+    max_p = max(prices)
+    price_range = max_p - min_p if max_p > min_p else 1
+
+    for f in flights:
+        # Price score
+        if f['price_thb'] > 0:
+            # Use best booking price if available
+            actual_price = f.get('best_booking_price') or f['price_thb']
+            f['price_score'] = round(10 * (1 - (actual_price - min_p) / price_range), 1)
+            f['price_score'] = max(0, min(10, f['price_score']))
+        else:
+            f['price_score'] = 0
+
+        # Time score
+        f['time_score'] = _calc_time_score(f, route_direction)
+
+        # Total score
+        f['total_score'] = round(f['price_score'] + f['time_score'], 1)
+
+    return flights
+
+
+def _calc_time_score(flight, direction):
+    """Calculate time preference score (0-10).
+
+    Outbound (BKK→DAD): prefer departure 10:00-14:00 (mid-day)
+    Return (DAD→BKK): prefer arrival ~18:00 BKK
+
+    Uses a bell curve centered on preferred time.
+    """
+    if direction == 'outbound':
+        time_str = flight.get('departure_time', '')
+        ideal_hour = 12.0  # noon departure
+    else:
+        time_str = flight.get('arrival_time', '')
+        ideal_hour = 18.0  # 6pm arrival BKK
+
+    if not time_str:
+        return 0
+
+    try:
+        h, m = time_str.split(':')
+        hour = int(h) + int(m) / 60.0
+    except (ValueError, AttributeError):
+        return 0
+
+    # Bell curve: score = 10 * exp(-(diff^2) / (2 * sigma^2))
+    # sigma=3 means ±3 hours from ideal still gets decent score
+    import math
+    diff = abs(hour - ideal_hour)
+    sigma = 3.0
+    score = 10 * math.exp(-(diff ** 2) / (2 * sigma ** 2))
+    return round(score, 1)
+
+    return ""

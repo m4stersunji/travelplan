@@ -114,7 +114,8 @@ def _update_all_flights(sh, route_results):
         'From', 'Depart', 'To', 'Arrive', 'Duration (min)',
         'Airline Price', 'Best 3rd Price', 'Best Source',
         'Aircraft', 'Stops', 'Direct', 'Excluded',
-        'Cabin Bag', 'Checked Bag', 'Type'
+        'Cabin Bag', 'Checked Bag', 'Type',
+        'Price Score', 'Time Score', 'Total Score'
     ]
     ws = _get_or_create_sheet(sh, 'All Flights', headers)
     now = _now()
@@ -143,6 +144,9 @@ def _update_all_flights(sh, route_results):
                 f.get('cabin_baggage', ''),
                 f.get('checked_baggage', ''),
                 f.get('service_type', ''),
+                f.get('price_score', ''),
+                f.get('time_score', ''),
+                f.get('total_score', ''),
             ])
 
     if rows:
@@ -279,12 +283,12 @@ def _update_dashboard(sh, route_results):
         ('RETURN', 'Danang → Bangkok', inbound),
     ]:
         rows.append([f'{direction}: {label}', '', '', '', '', '', '', ''])
-        rows.append(['Date', 'Airline', 'Depart', 'Arrive', 'Airline Price', 'Best Price', 'Source', 'Baggage', 'Stops'])
+        rows.append(['Date', 'Airline', 'Depart', 'Arrive', 'Airline Price', 'Best Price', 'Source', 'Baggage', 'Stops', 'Score'])
 
         for r in routes:
             flights = sorted(r.get('flights', []), key=lambda f: f['price_thb'])[:10]
             if flights:
-                rows.append([r['date_label'], '---', '---', '---', '---', '---', '---', '---', '---'])
+                rows.append([r['date_label'], '---', '---', '---', '---', '---', '---', '---', '---', '---'])
             for f in flights:
                 bp = f.get('best_booking_price')
                 src = f.get('best_booking_source', '')
@@ -296,13 +300,15 @@ def _update_dashboard(sh, route_results):
                 stops = 'Direct' if f.get('is_direct') else f"{f.get('num_stops', '?')} stop"
                 excluded = ' ⚠️' if f.get('is_excluded_airline') else ''
 
+                score = f.get('total_score', '')
+                score_str = f"{score}/20" if score != '' else ''
                 rows.append([
                     '',
                     f"{f['airline']}{excluded}",
                     dep, arr,
                     f['price_thb'],
                     bp if bp is not None else '',
-                    src, bag, stops,
+                    src, bag, stops, score_str,
                 ])
         rows.append([])
 
