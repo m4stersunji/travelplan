@@ -27,7 +27,8 @@
       "Bash(sudo gpg:*)",
       "Bash(bash:*)",
       "WebSearch",
-      "Bash(echo \"Server started - PID: $!\")"
+      "Bash(echo \"Server started - PID: $!\")",
+      "Bash(gh auth:*)"
     ]
   }
 }

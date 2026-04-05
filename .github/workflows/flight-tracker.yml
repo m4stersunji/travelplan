@@ -1,0 +1,55 @@
+name: Flight Price Tracker
+
+on:
+  schedule:
+    # Every 4 hours (UTC) — offset minutes to avoid GitHub's busy :00 mark
+    - cron: '17 */4 * * *'
+  workflow_dispatch:  # Manual trigger button
+
+jobs:
+  track-flights:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create .env from secrets
+        run: |
+          cat > .env << 'ENVEOF'
+          LINE_CHANNEL_ACCESS_TOKEN=${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID=${{ secrets.LINE_USER_ID }}
+          GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS_PATH=./credentials.json
+          ENVEOF
+
+      - name: Create Google credentials file
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+
+      - name: Run flight tracker
+        run: |
+          mkdir -p data logs
+          python src/main.py
+
+      - name: Show results
+        if: always()
+        run: |
+          echo "=== Log output ==="
+          cat logs/*.log 2>/dev/null || echo "No logs"
+          echo ""
+          echo "=== CSV files ==="
+          ls -la data/*.csv 2>/dev/null || echo "No CSVs"
