@@ -70,9 +70,13 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
         driver = create_driver()
         driver.get(url)
 
+        # Wait for flight results to render
+        import time
+        time.sleep(8)
+
         try:
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-ved]"))
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
             )
         except TimeoutException:
             logger.warning("Timed out waiting for flight results to load; parsing what we have")
@@ -96,76 +100,61 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
 
 def parse_flight_data(page_source: str) -> list:
     """
-    Parses flight data from HTML page source.
-    Tries lxml/cssselect first, falls back to regex.
+    Parses flight data from Google Flights HTML page source.
+    Uses aria-label attributes which contain structured flight info like:
+    'From 5335 Thai baht. Nonstop flight with Vietnam Airlines. Leaves ... at 6:05 PM ...
+     arrives at ... 7:45 PM ... Total duration 1 hr 40 min.'
     Returns list of dicts with flight info keys.
     """
     if not page_source or not page_source.strip():
         return []
 
-    if LXML_AVAILABLE:
-        try:
-            return _parse_with_lxml(page_source)
-        except Exception as exc:
-            logger.warning("lxml parsing failed (%s), falling back to regex", exc)
+    # Extract flight details from aria-label attributes
+    pattern = r'aria-label="From ([\d,]+) Thai baht\. ([^"]+)"'
+    matches = re.findall(pattern, page_source)
 
-    return parse_flight_data_regex(page_source)
-
-
-def _parse_with_lxml(page_source: str) -> list:
-    """
-    Attempts to parse flight data using lxml and cssselect.
-    Google Flights renders heavily via JS, so this may return an empty list
-    if the static HTML doesn't contain rendered flight cards.
-    """
-    tree = lxml_html.fromstring(page_source)
-
-    # Google Flights flight result containers (class names can vary by version)
-    flight_cards = (
-        tree.cssselect("li.pIav2d")
-        or tree.cssselect("div.yR1LTd")
-        or tree.cssselect("[data-ved] li")
-    )
-
-    if not flight_cards:
-        # Fall through to regex if no structured nodes found
-        return parse_flight_data_regex(page_source)
+    if not matches:
+        logger.warning("No aria-label flight data found")
+        return []
 
     flights = []
-    for card in flight_cards:
-        text = card.text_content()
+    seen = set()
 
-        # Extract price
-        price_match = re.search(r'[฿\$]?([\d,]+)', text)
-        price_thb = parse_price(price_match.group(0)) if price_match else 0
+    for price_str, details in matches:
+        # Deduplicate — same flight appears multiple times in the HTML
+        key = f"{price_str}|{details[:80]}"
+        if key in seen:
+            continue
+        seen.add(key)
 
-        # Extract times — first two HH:MM AM/PM occurrences
-        times = re.findall(r'\d{1,2}:\d{2}\s*(?:AM|PM)', text, re.IGNORECASE)
-        departure_time = normalize_time(times[0]) if len(times) > 0 else ""
-        arrival_time = normalize_time(times[1]) if len(times) > 1 else ""
+        price_thb = parse_price(price_str)
 
-        # Duration
-        dur_match = re.search(r'(\d+)\s*hr\s*(\d+)?\s*min?', text, re.IGNORECASE)
-        duration_minutes = parse_duration(dur_match.group(0)) if dur_match else 0
+        # Extract stops: "Nonstop flight" or "1 stop flight"
+        stops_match = re.match(r'(Nonstop|\d+\s*stop)\s*flight', details, re.IGNORECASE)
+        num_stops = parse_stops(stops_match.group(1)) if stops_match else 0
 
-        # Airline name — first text node or prominent span
-        airline_nodes = card.cssselect(".sSHqwe") or card.cssselect(".h1fkLb")
-        airline = airline_nodes[0].text_content().strip() if airline_nodes else ""
+        # Extract airline: "with Vietnam Airlines" or "with Cathay Pacific and Hong Kong Express"
+        airline_match = re.search(r'with\s+(.+?)\.?\s*Leaves', details)
+        airline = airline_match.group(1).strip() if airline_match else ''
 
-        # Flight number
-        fn_match = re.search(r'[A-Z]{2}\s*\d{1,4}', text)
-        flight_number = fn_match.group(0).replace(" ", "") if fn_match else ""
+        # Extract departure time: "at 6:05 PM on"
+        dep_match = re.search(r'Leaves\s+.+?\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)\s+on', details)
+        departure_time = normalize_time(dep_match.group(1)) if dep_match else ''
 
-        # Stops
-        stops_match = re.search(r'Nonstop|\d+\s*stop', text, re.IGNORECASE)
-        num_stops = parse_stops(stops_match.group(0)) if stops_match else 0
+        # Extract arrival time: "arrives at ... at 7:45 PM on"
+        arr_match = re.search(r'arrives\s+at\s+.+?\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)\s+on', details)
+        arrival_time = normalize_time(arr_match.group(1)) if arr_match else ''
 
-        # Aircraft
-        aircraft_type = extract_aircraft(text)
+        # Extract duration: "Total duration 1 hr 40 min"
+        dur_match = re.search(r'Total duration\s+(.+?)\.', details)
+        duration_minutes = parse_duration(dur_match.group(1)) if dur_match else 0
+
+        # Extract aircraft type if present in the details
+        aircraft_type = extract_aircraft(details)
 
         flights.append({
             "airline": airline,
-            "flight_number": flight_number,
+            "flight_number": '',  # Not in aria-label; populated if we add detail scraping later
             "departure_time": departure_time,
             "arrival_time": arrival_time,
             "duration_minutes": duration_minutes,
@@ -174,38 +163,7 @@ def _parse_with_lxml(page_source: str) -> list:
             "num_stops": num_stops,
         })
 
-    return flights
-
-
-def parse_flight_data_regex(page_source: str) -> list:
-    """
-    Regex fallback parser. Extracts prices matching ฿X,XXX and times matching HH:MM AM/PM.
-    Returns a best-effort list of flight dicts.
-    """
-    if not page_source or not page_source.strip():
-        return []
-
-    prices = re.findall(r'฿[\d,]+', page_source)
-    times = re.findall(r'\d{1,2}:\d{2}\s*(?:AM|PM)', page_source, re.IGNORECASE)
-
-    flights = []
-    for i, price_str in enumerate(prices):
-        dep_idx = i * 2
-        arr_idx = i * 2 + 1
-        departure_time = normalize_time(times[dep_idx]) if dep_idx < len(times) else ""
-        arrival_time = normalize_time(times[arr_idx]) if arr_idx < len(times) else ""
-
-        flights.append({
-            "airline": "",
-            "flight_number": "",
-            "departure_time": departure_time,
-            "arrival_time": arrival_time,
-            "duration_minutes": 0,
-            "price_thb": parse_price(price_str),
-            "aircraft_type": "",
-            "num_stops": 0,
-        })
-
+    logger.info(f"Parsed {len(flights)} unique flights from aria-labels")
     return flights
 
 
