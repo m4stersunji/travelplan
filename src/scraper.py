@@ -213,13 +213,11 @@ def parse_flight_data(page_source: str) -> list:
 
 def _enrich_all_bookings(driver, flights):
     """Get 3rd party booking prices for ALL flights.
-    Reloads page between clicks since DOM doesn't recover after toggling.
+    Uses browser Back button to restore DOM after each click.
     """
     import time
 
-    url = driver.current_url
     checked = 0
-
     for flight in flights:
         price = flight['price_thb']
         dep_time_12h = _to_12h(flight.get('departure_time', ''))
@@ -227,21 +225,12 @@ def _enrich_all_bookings(driver, flights):
             continue
 
         try:
-            # Reload page fresh for each flight
-            if checked > 0:
-                driver.get(url)
-                time.sleep(5)
-                try:
-                    WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
-                    )
-                except TimeoutException:
-                    continue
-
+            # Click the flight → opens booking page
             js = f'''
             var links = document.querySelectorAll('[role="link"][aria-label*="{price} Thai baht"]');
             for (var l of links) {{
-                if (l.getAttribute('aria-label').includes('{dep_time_12h}')) {{
+                var label = l.getAttribute('aria-label') || '';
+                if (label.includes('{dep_time_12h}')) {{
                     l.click();
                     return true;
                 }}
@@ -273,10 +262,39 @@ def _enrich_all_bookings(driver, flights):
                 flight['best_booking_source'] = cheapest[0]
                 checked += 1
 
+            # Use browser Back to restore original page state
+            driver.back()
+            time.sleep(3)
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
+                )
+            except TimeoutException:
+                pass
+
         except Exception as e:
             logger.debug(f"Booking check failed for {flight.get('airline')}: {e}")
 
-    logger.info(f"Booking data: {checked}/{len(flights)} flights enriched")
+    # Fill gaps: flights with same airline+price likely have same booking options
+    booking_by_airline_price = {}
+    for f in flights:
+        if f.get('best_booking_price'):
+            key = f"{f['airline']}|{f['price_thb']}"
+            booking_by_airline_price[key] = {
+                'best_booking_price': f['best_booking_price'],
+                'best_booking_source': f['best_booking_source'],
+            }
+
+    filled = 0
+    for f in flights:
+        if not f.get('best_booking_price'):
+            key = f"{f['airline']}|{f['price_thb']}"
+            if key in booking_by_airline_price:
+                f.update(booking_by_airline_price[key])
+                filled += 1
+
+    total_enriched = checked + filled
+    logger.info(f"Booking data: {checked} clicked + {filled} filled = {total_enriched}/{len(flights)} total")
 
 
 def _get_booking_data(driver, flights):
