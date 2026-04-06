@@ -35,8 +35,13 @@ st.markdown("""
 @st.cache_resource
 def get_spreadsheet():
     try:
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        return gc.open_by_key(st.secrets["GOOGLE_SHEET_ID"])
+        gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+        # Try top-level first, then inside gcp_service_account
+        sheet_id = st.secrets.get("GOOGLE_SHEET_ID") or st.secrets["gcp_service_account"].get("GOOGLE_SHEET_ID")
+        if not sheet_id:
+            st.error("GOOGLE_SHEET_ID not found in secrets")
+            return None
+        return gc.open_by_key(sheet_id)
     except Exception as e:
         st.error(f"Cannot connect to Google Sheets: {e}")
         return None
