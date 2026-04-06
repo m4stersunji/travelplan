@@ -76,61 +76,73 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
         return []
 
     url = build_google_flights_url(origin, destination, date)
-    driver = None
-    try:
-        driver = create_driver()
-        driver.get(url)
+    import time
 
-        # Wait for flight results to render
-        import time
-        time.sleep(8)
-
+    # Retry up to 2 times if page fails to render
+    for attempt in range(2):
+        driver = None
         try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
-            )
-        except TimeoutException:
-            logger.warning("Timed out waiting for flight results to load; parsing what we have")
+            driver = create_driver()
+            driver.get(url)
+            time.sleep(8)
 
-        # Step 1: Get booking options (clean DOM, before expanding)
-        page_source = driver.page_source
-        initial_flights = parse_flight_data(page_source)
-        booking_data = {}
-        if initial_flights:
-            booking_data = _get_booking_data(driver, initial_flights)
-
-        # Step 2: Navigate back to close any open booking panel
-        import time as _t
-        driver.find_element(By.TAG_NAME, 'body').send_keys('\uf01b')  # Escape
-        _t.sleep(1)
-
-        # Step 3: Expand grouped flights on same page
-        _expand_flight_groups(driver)
-
-        # Step 4: Parse all flights
-        page_source = driver.page_source
-        flights = parse_flight_data(page_source)
-
-        # Step 5: Apply booking data to matching flights
-        for f in flights:
-            key = f"{f['airline']}|{f['price_thb']}"
-            if key in booking_data:
-                f.update(booking_data[key])
-
-        return flights
-
-    except TimeoutException as exc:
-        logger.error("Page load timed out: %s", exc)
-        return []
-    except WebDriverException as exc:
-        logger.error("WebDriver error: %s", exc)
-        return []
-    finally:
-        if driver is not None:
             try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
+                )
+            except TimeoutException:
+                logger.warning("Timed out waiting for flight results")
+
+            # Step 1: Get booking options (clean DOM, before expanding)
+            page_source = driver.page_source
+            initial_flights = parse_flight_data(page_source)
+
+            if not initial_flights and attempt < 1:
+                logger.warning(f"No flights found (attempt {attempt + 1}), retrying...")
                 driver.quit()
-            except Exception:
-                pass
+                time.sleep(3)
+                continue
+
+            booking_data = {}
+            if initial_flights:
+                booking_data = _get_booking_data(driver, initial_flights)
+
+            # Step 2: Close any open booking panel
+            from selenium.webdriver.common.keys import Keys
+            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
+            time.sleep(1)
+
+            # Step 3: Expand grouped flights on same page
+            _expand_flight_groups(driver)
+
+            # Step 4: Parse all flights
+            page_source = driver.page_source
+            flights = parse_flight_data(page_source)
+
+            # Step 5: Apply booking data to matching flights
+            for f in flights:
+                key = f"{f['airline']}|{f['price_thb']}"
+                if key in booking_data:
+                    f.update(booking_data[key])
+
+            return flights
+
+        except TimeoutException as exc:
+            logger.error("Page load timed out: %s", exc)
+            if attempt < 1:
+                continue
+            return []
+        except WebDriverException as exc:
+            logger.error("WebDriver error: %s", exc)
+            return []
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+    return []
 
 
 def parse_flight_data(page_source: str) -> list:
@@ -225,10 +237,14 @@ def _get_booking_data(driver, flights):
     import time
     result = {}
 
+    # Check top 5 flights (direct first, then cheapest with stops)
     direct = [f for f in flights if f.get('num_stops', 1) == 0]
+    with_stops = [f for f in flights if f.get('num_stops', 1) > 0]
     direct.sort(key=lambda f: f['price_thb'])
+    with_stops.sort(key=lambda f: f['price_thb'])
+    to_check = direct[:3] + with_stops[:2]  # Top 3 direct + top 2 with stops
 
-    for flight in direct[:3]:
+    for flight in to_check:
         price = flight['price_thb']
         dep_time_12h = _to_12h(flight.get('departure_time', ''))
         if not dep_time_12h:

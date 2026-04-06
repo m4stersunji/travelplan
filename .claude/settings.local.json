@@ -38,7 +38,10 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(npm install:*)",
       "Bash(agent-browser install:*)",
-      "Bash(export PATH=\"/mnt/c/Program Files/nodejs:$PATH\")"
+      "Bash(export PATH=\"/mnt/c/Program Files/nodejs:$PATH\")",
+      "Bash(sqlite3:*)",
+      "Bash(crontab:*)",
+      "Bash(grep \"Starting flight price check\" /home/m4stersun/travelplan/logs/scraper_*.log)"
     ]
   }
 }
