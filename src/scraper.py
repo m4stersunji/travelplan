@@ -257,9 +257,14 @@ def _enrich_all_bookings(driver, flights):
 
             if bookings:
                 cheapest = min(bookings, key=lambda x: x[1])
-                flight['booking_options'] = bookings
+                flight['booking_options'] = [(s, p) for s, p, _ in bookings]
                 flight['best_booking_price'] = cheapest[1]
                 flight['best_booking_source'] = cheapest[0]
+                flight['best_booking_fee_note'] = cheapest[2] if len(cheapest) > 2 else ''
+                # Store all sources with fees for display
+                flight['all_booking_sources'] = [
+                    {'source': s, 'price': p, 'fee_note': fn} for s, p, fn in bookings
+                ]
                 checked += 1
 
             # Use browser Back to restore original page state
@@ -434,7 +439,9 @@ def _enrich_booking_options(driver, flights):
 
 
 def _parse_booking_text(body_text):
-    """Parse 'Book with X / THB Y' pairs from page text."""
+    """Parse 'Book with X / THB Y' pairs from page text.
+    Returns list of (source, price, fee_note) tuples.
+    """
     lines = body_text.split('\n')
     bookings = []
     i = 0
@@ -442,13 +449,15 @@ def _parse_booking_text(body_text):
         line = lines[i].strip()
         if line.startswith('Book with ') or line.startswith('Book on '):
             source = line.replace('Book with ', '').replace('Book on ', '').replace('Airline', '').strip()
+            fee_note = ''
             for j in range(i + 1, min(i + 5, len(lines))):
                 nxt = lines[j].strip()
                 if nxt.startswith('Includes'):
+                    fee_note = nxt  # e.g. "Includes THB 120 credit card fee"
                     continue
                 pm = re.match(r'THB ([\d,]+)', nxt)
                 if pm:
-                    bookings.append((source, int(pm.group(1).replace(',', ''))))
+                    bookings.append((source, int(pm.group(1).replace(',', '')), fee_note))
                     break
         i += 1
     return bookings

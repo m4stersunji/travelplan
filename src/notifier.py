@@ -182,8 +182,17 @@ def _build_route_bubble(route_data, direction, color, top_n):
         airline = f['airline'][:18]
         excluded = " ⚠️" if f.get('is_excluded_airline') else ""
         stops = "" if f.get('is_direct') else f" {f['num_stops']}stop"
-        bag = f.get('checked_baggage', '')
-        bag_s = "✓bag" if 'checked' in bag.lower() else "no bag"
+
+        # Baggage with actual kg
+        cabin = f.get('cabin_baggage', '').replace(' carry-on', '')
+        checked = f.get('checked_baggage', '')
+        if 'No checked' in checked or 'no bag' in checked.lower():
+            bag_line = f"Cabin {cabin} only (+luggage fee)"
+            bag_color = "#E53935"
+        else:
+            checked_kg = checked.replace(' checked', '')
+            bag_line = f"Cabin {cabin} + Luggage {checked_kg}"
+            bag_color = "#AAAAAA"
 
         rows.append({
             "type": "box", "layout": "vertical", "spacing": "xs", "paddingBottom": "md",
@@ -194,12 +203,9 @@ def _build_route_bubble(route_data, direction, color, top_n):
                     {"type": "text", "text": f"{label}", "size": "xxs", "weight": "bold",
                      "color": s_color, "flex": 2, "align": "end"},
                 ]},
-                {"type": "text", "text": f"{airline}{excluded}", "size": "xs", "color": "#666666"},
-                {"type": "box", "layout": "horizontal", "contents": [
-                    {"type": "text", "text": f"{dep}→{arr}", "size": "xxs", "color": "#AAAAAA", "flex": 3},
-                    {"type": "text", "text": f"{bag_s}{stops}", "size": "xxs", "color": "#AAAAAA",
-                     "flex": 2, "align": "end"},
-                ]},
+                {"type": "text", "text": f"{airline}{excluded}{stops}", "size": "xs", "color": "#666666"},
+                {"type": "text", "text": f"{dep}→{arr}", "size": "xxs", "color": "#AAAAAA"},
+                {"type": "text", "text": bag_line, "size": "xxs", "color": bag_color},
             ]
         })
 
@@ -230,6 +236,15 @@ def _add_flight_row(contents, direction, date_label, f):
     score_int = round(f.get('total_score', 0))
     label = score_label(score_int)
 
+    # Baggage info
+    cabin = f.get('cabin_baggage', '').replace(' carry-on', '')
+    checked = f.get('checked_baggage', '')
+    if 'No checked' in checked or 'no bag' in checked.lower():
+        bag_text = f"Cabin {cabin} only (+luggage fee)"
+    else:
+        checked_kg = checked.replace(' checked', '')
+        bag_text = f"Cabin {cabin} + Luggage {checked_kg}"
+
     contents.append({
         "type": "box", "layout": "vertical", "margin": "md",
         "contents": [
@@ -244,6 +259,8 @@ def _add_flight_row(contents, direction, date_label, f):
              "size": "sm", "weight": "bold"},
             {"type": "text", "text": f"{dep}→{arr}" + (f" via {src}" if src else ""),
              "size": "xxs", "color": "#999999"},
+            {"type": "text", "text": bag_text,
+             "size": "xxs", "color": "#E53935" if "+bag fee" in bag_text else "#999999"},
         ]
     })
 
