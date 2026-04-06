@@ -93,37 +93,19 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
             except TimeoutException:
                 logger.warning("Timed out waiting for flight results")
 
-            # Step 1: Get booking options (clean DOM, before expanding)
+            # Parse initial flights (ungrouped — typically 6-10 per airline)
             page_source = driver.page_source
-            initial_flights = parse_flight_data(page_source)
+            flights = parse_flight_data(page_source)
 
-            if not initial_flights and attempt < 1:
+            if not flights and attempt < 1:
                 logger.warning(f"No flights found (attempt {attempt + 1}), retrying...")
                 driver.quit()
                 time.sleep(3)
                 continue
 
-            booking_data = {}
-            if initial_flights:
-                booking_data = _get_booking_data(driver, initial_flights)
-
-            # Step 2: Close any open booking panel
-            from selenium.webdriver.common.keys import Keys
-            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
-            time.sleep(1)
-
-            # Step 3: Expand grouped flights on same page
-            _expand_flight_groups(driver)
-
-            # Step 4: Parse all flights
-            page_source = driver.page_source
-            flights = parse_flight_data(page_source)
-
-            # Step 5: Apply booking data to matching flights
-            for f in flights:
-                key = f"{f['airline']}|{f['price_thb']}"
-                if key in booking_data:
-                    f.update(booking_data[key])
+            # Get booking options for ALL flights
+            if flights:
+                _enrich_all_bookings(driver, flights)
 
             return flights
 
@@ -229,25 +211,94 @@ def parse_flight_data(page_source: str) -> list:
     return flights
 
 
+def _enrich_all_bookings(driver, flights):
+    """Get 3rd party booking prices for ALL flights.
+    Reloads page between clicks since DOM doesn't recover after toggling.
+    """
+    import time
+
+    url = driver.current_url
+    checked = 0
+
+    for flight in flights:
+        price = flight['price_thb']
+        dep_time_12h = _to_12h(flight.get('departure_time', ''))
+        if not dep_time_12h:
+            continue
+
+        try:
+            # Reload page fresh for each flight
+            if checked > 0:
+                driver.get(url)
+                time.sleep(5)
+                try:
+                    WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
+                    )
+                except TimeoutException:
+                    continue
+
+            js = f'''
+            var links = document.querySelectorAll('[role="link"][aria-label*="{price} Thai baht"]');
+            for (var l of links) {{
+                if (l.getAttribute('aria-label').includes('{dep_time_12h}')) {{
+                    l.click();
+                    return true;
+                }}
+            }}
+            return false;
+            '''
+            clicked_ok = driver.execute_script(js)
+            if not clicked_ok:
+                continue
+
+            time.sleep(2.5)
+
+            # Expand "more booking options"
+            try:
+                more = driver.find_elements(By.XPATH, '//*[contains(text(), "more booking options")]')
+                for btn in more:
+                    driver.execute_script('arguments[0].click();', btn)
+                    time.sleep(1)
+            except Exception:
+                pass
+
+            body_text = driver.find_element(By.TAG_NAME, 'body').text
+            bookings = _parse_booking_text(body_text)
+
+            if bookings:
+                cheapest = min(bookings, key=lambda x: x[1])
+                flight['booking_options'] = bookings
+                flight['best_booking_price'] = cheapest[1]
+                flight['best_booking_source'] = cheapest[0]
+                checked += 1
+
+        except Exception as e:
+            logger.debug(f"Booking check failed for {flight.get('airline')}: {e}")
+
+    logger.info(f"Booking data: {checked}/{len(flights)} flights enriched")
+
+
 def _get_booking_data(driver, flights):
-    """Get 3rd party booking prices for top direct flights.
+    """Get 3rd party booking prices for ALL flights.
     Called BEFORE expanding groups (cleaner DOM = more booking sources).
     Returns dict keyed by 'airline|price' with booking fields.
     """
     import time
     result = {}
 
-    # Check top 5 flights (direct first, then cheapest with stops)
-    direct = [f for f in flights if f.get('num_stops', 1) == 0]
-    with_stops = [f for f in flights if f.get('num_stops', 1) > 0]
-    direct.sort(key=lambda f: f['price_thb'])
-    with_stops.sort(key=lambda f: f['price_thb'])
-    to_check = direct[:3] + with_stops[:2]  # Top 3 direct + top 2 with stops
+    # Check all flights, sorted by price (cheapest first)
+    to_check = sorted(flights, key=lambda f: f['price_thb'])
 
     for flight in to_check:
         price = flight['price_thb']
         dep_time_12h = _to_12h(flight.get('departure_time', ''))
         if not dep_time_12h:
+            continue
+
+        # Skip if we already have data for same airline+price
+        key = f"{flight['airline']}|{price}"
+        if key in result:
             continue
 
         try:
@@ -265,14 +316,14 @@ def _get_booking_data(driver, flights):
             if not clicked:
                 continue
 
-            time.sleep(3)
+            time.sleep(2)
 
             # Expand "more booking options"
             try:
                 more = driver.find_elements(By.XPATH, '//*[contains(text(), "more booking options")]')
                 for btn in more:
                     driver.execute_script('arguments[0].click();', btn)
-                    time.sleep(1.5)
+                    time.sleep(1)
             except Exception:
                 pass
 
