@@ -192,7 +192,16 @@ def _build_route_bubble(route_data, direction, color, top_n):
         arr = f.get('arrival_time', '?')
         airline = f['airline'][:18]
         excluded = " ⚠️" if f.get('is_excluded_airline') else ""
-        stops = "" if f.get('is_direct') else f" {f['num_stops']}stop"
+        dur = f.get('duration_text', '')
+
+        # Transit info
+        if f.get('is_direct'):
+            route_line = f"{dep}→{arr}" + (f" ({dur})" if dur else "")
+        else:
+            layover = f.get('layover_airport', '')[:15]
+            lay_dur = f.get('layover_duration', '')
+            via = f" via {layover}" if layover else ""
+            route_line = f"{dep}→{arr} {f['num_stops']}stop{via}"
 
         # Baggage with actual kg
         cabin = f.get('cabin_baggage', '').replace(' carry-on', '')
@@ -214,8 +223,8 @@ def _build_route_bubble(route_data, direction, color, top_n):
                     {"type": "text", "text": f"{label}", "size": "xxs", "weight": "bold",
                      "color": s_color, "flex": 2, "align": "end"},
                 ]},
-                {"type": "text", "text": f"{airline}{excluded}{stops}", "size": "xs", "color": "#666666"},
-                {"type": "text", "text": f"{dep}→{arr}", "size": "xxs", "color": "#AAAAAA"},
+                {"type": "text", "text": f"{airline}{excluded}", "size": "xs", "color": "#666666"},
+                {"type": "text", "text": route_line, "size": "xxs", "color": "#AAAAAA"},
                 {"type": "text", "text": bag_line, "size": "xxs", "color": bag_color},
             ]
         })
@@ -281,33 +290,48 @@ def _add_flight_row(contents, direction, date_label, f):
     score_int = round(f.get('total_score', 0))
     label = score_label(score_int)
 
-    # Baggage info
+    # Route info
+    if f.get('is_direct'):
+        dur = f.get('duration_text', '')
+        route_text = f"Direct {dep}→{arr}" + (f" ({dur})" if dur else "")
+    else:
+        layover = f.get('layover_airport', '')[:15]
+        lay_dur = f.get('layover_duration', '')
+        via = f" via {layover}" if layover else ""
+        wait = f" wait {lay_dur}" if lay_dur else ""
+        route_text = f"{dep}→{arr} {f.get('num_stops',1)}stop{via}{wait}"
+
+    # Booking source
+    src_text = f"Book: {src}" if src else ""
+
+    # Baggage
     cabin = f.get('cabin_baggage', '').replace(' carry-on', '')
     checked = f.get('checked_baggage', '')
     if 'No checked' in checked or 'no bag' in checked.lower():
-        bag_text = f"Cabin {cabin} only (+luggage fee)"
+        bag_text = f"{cabin} only (+luggage fee)"
     else:
         checked_kg = checked.replace(' checked', '')
-        bag_text = f"Cabin {cabin} + Luggage {checked_kg}"
+        bag_text = f"{cabin} + {checked_kg}"
 
-    contents.append({
-        "type": "box", "layout": "vertical", "margin": "md",
-        "contents": [
-            {"type": "box", "layout": "horizontal", "contents": [
-                {"type": "text", "text": f"{direction} {date_label}",
-                 "size": "xxs", "color": "#AAAAAA", "flex": 4},
-                {"type": "text", "text": label, "size": "xxs", "weight": "bold",
-                 "color": "#1DB446" if score_int >= 16 else "#FF8C00",
-                 "flex": 2, "align": "end"},
-            ]},
-            {"type": "text", "text": f"฿{price:,} {f['airline'][:18]}",
-             "size": "sm", "weight": "bold"},
-            {"type": "text", "text": f"{dep}→{arr}" + (f" via {src}" if src else ""),
-             "size": "xxs", "color": "#999999"},
-            {"type": "text", "text": bag_text,
-             "size": "xxs", "color": "#E53935" if "+bag fee" in bag_text else "#999999"},
-        ]
-    })
+    row_contents = [
+        {"type": "box", "layout": "horizontal", "contents": [
+            {"type": "text", "text": f"{direction} {date_label}",
+             "size": "xxs", "color": "#AAAAAA", "flex": 4},
+            {"type": "text", "text": label, "size": "xxs", "weight": "bold",
+             "color": "#1DB446" if score_int >= 16 else "#FF8C00",
+             "flex": 2, "align": "end"},
+        ]},
+        {"type": "text", "text": f"฿{price:,} {f['airline'][:18]}",
+         "size": "sm", "weight": "bold"},
+        {"type": "text", "text": route_text, "size": "xxs", "color": "#999999", "wrap": True},
+        {"type": "text", "text": bag_text,
+         "size": "xxs", "color": "#E53935" if "+luggage fee" in bag_text else "#999999"},
+    ]
+
+    if src_text:
+        row_contents.append({"type": "text", "text": src_text, "size": "xxs", "color": "#0367D3"})
+
+    contents.append({"type": "box", "layout": "vertical", "margin": "md", "contents": row_contents})
 
 
 def _wrap_bubble(title, bg_color, contents):

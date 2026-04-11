@@ -196,6 +196,14 @@ def parse_flight_data(page_source: str) -> list:
         # Extract aircraft type if present in the details
         aircraft_type = extract_aircraft(details)
 
+        # Extract layover info: "Layover (1 of 1) is a 3 hr 10 min layover at Noi Bai International Airport"
+        layover_match = re.search(r'Layover.*?(\d+\s*hr?\s*(?:\d+\s*min)?)\s*layover\s+at\s+(.+?)(?:\.|in\s)', details)
+        layover_duration = layover_match.group(1).strip() if layover_match else ''
+        layover_airport = layover_match.group(2).strip() if layover_match else ''
+
+        # Extract duration text for display
+        dur_text = dur_match.group(1).strip() if dur_match else ''
+
         cabin, checked, svc_type = get_baggage_info(airline)
 
         flights.append({
@@ -206,9 +214,12 @@ def parse_flight_data(page_source: str) -> list:
             "arrival_airport": arrival_airport,
             "arrival_time": arrival_time,
             "duration_minutes": duration_minutes,
+            "duration_text": dur_text,
             "price_thb": price_thb,
             "aircraft_type": aircraft_type,
             "num_stops": num_stops,
+            "layover_duration": layover_duration,
+            "layover_airport": layover_airport,
             "cabin_baggage": cabin,
             "checked_baggage": checked,
             "service_type": svc_type,
