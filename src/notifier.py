@@ -152,17 +152,38 @@ def _build_summary(trip_name, outbound, inbound, all_results, valid_combos):
 
 
 def _add_compact_flight(contents, direction, date_label, f):
-    """One-line flight for summary. No score, no baggage, no source."""
+    """Flight row for summary — price, airline, time, baggage. No score."""
     price = best_price(f)
     dep = f.get('departure_time', '?')
     arr = f.get('arrival_time', '?')
+    src = f.get('best_booking_source', '')
+
+    # Baggage
+    cabin = f.get('cabin_baggage', '').replace(' carry-on', '')
+    checked = f.get('checked_baggage', '')
+    if 'No checked' in checked or 'no bag' in checked.lower():
+        bag = f"{cabin} +fee"
+    else:
+        bag = f"{cabin}+{checked.replace(' checked', '')}"
+
+    # Route
+    if f.get('is_direct'):
+        route = f"{dep}→{arr}"
+    else:
+        via = f.get('layover_airport', '')[:10]
+        route = f"{dep}→{arr} 1stop via {via}" if via else f"{dep}→{arr} 1stop"
+
     contents.append({
-        "type": "box", "layout": "horizontal", "margin": "sm",
+        "type": "box", "layout": "vertical", "margin": "md",
         "contents": [
             {"type": "text", "text": f"{direction} {date_label}",
-             "size": "xxs", "color": "#AAAAAA", "flex": 3},
-            {"type": "text", "text": f"฿{price:,} {f['airline'][:12]} {dep}-{arr}",
-             "size": "xxs", "color": "#333333", "flex": 7},
+             "size": "xxs", "color": "#AAAAAA"},
+            {"type": "text", "text": f"฿{price:,} {f['airline'][:15]}",
+             "size": "sm", "weight": "bold"},
+            {"type": "text", "text": f"{route} | {bag}",
+             "size": "xxs", "color": "#999999", "wrap": True},
+            *([{"type": "text", "text": f"via {src}",
+                "size": "xxs", "color": "#0367D3"}] if src else []),
         ]
     })
 
