@@ -42,7 +42,9 @@
       "Bash(sqlite3:*)",
       "Bash(crontab:*)",
       "Bash(grep \"Starting flight price check\" /home/m4stersun/travelplan/logs/scraper_*.log)",
-      "Bash(curl -s -H \"Authorization: token $\\(git remote get-url origin)"
+      "Bash(curl -s -H \"Authorization: token $\\(git remote get-url origin)",
+      "Bash(curl -s -H 'Authorization: Bearer a3UmB7spQC43sxpiVbyk4nseQFeEro6f0gNxrwzV4huYoi1hQ1HTPIjWZdao8mlEcbmfbCdW+xHTGEPYFm0xET9rh69rirtGIsXgxtvblxmt86BSXg4Om83T9tjtADu99Lecu4o/IOmdbvHjs0TLTwdB04t89/1O/w1cDnyilFU=' https://api.line.me/v2/bot/message/quota/consumption)",
+      "Bash(curl -s -H 'Authorization: Bearer a3UmB7spQC43sxpiVbyk4nseQFeEro6f0gNxrwzV4huYoi1hQ1HTPIjWZdao8mlEcbmfbCdW+xHTGEPYFm0xET9rh69rirtGIsXgxtvblxmt86BSXg4Om83T9tjtADu99Lecu4o/IOmdbvHjs0TLTwdB04t89/1O/w1cDnyilFU=' https://api.line.me/v2/bot/message/quota)"
     ]
   }
 }

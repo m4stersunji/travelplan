@@ -25,16 +25,10 @@ logger = logging.getLogger(__name__)
 
 def build_google_flights_url(origin: str, destination: str, date: str) -> str:
     """Returns a Google Flights URL for the given origin, destination, and date."""
-    # Format date as "May 29 2026" for natural language query
-    from datetime import datetime as _dt
-    try:
-        d = _dt.strptime(date, '%Y-%m-%d')
-        date_str = d.strftime('%b+%d+%Y')  # "May+29+2026"
-    except ValueError:
-        date_str = date
+    # Use ISO date format (YYYY-MM-DD) — works for all days including weekends
     return (
         f"https://www.google.com/travel/flights"
-        f"?q={origin}+to+{destination}+{date_str}+one+way"
+        f"?q={origin}+to+{destination}+{date}+one+way"
         f"&curr=THB&hl=en"
     )
 
