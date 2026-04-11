@@ -37,7 +37,10 @@ def init_db(db_path):
                 best_booking_source TEXT,
                 cabin_baggage       TEXT,
                 checked_baggage     TEXT,
-                service_type        TEXT
+                service_type        TEXT,
+                price_score         REAL,
+                time_score          REAL,
+                total_score         REAL
             );
             CREATE TABLE IF NOT EXISTS price_alerts (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +69,8 @@ def insert_flight(db_path, scrape_run_id, airline, flight_number,
                   duration_minutes, price_thb, aircraft_type,
                   num_stops, is_direct, is_excluded_airline,
                   best_booking_price=None, best_booking_source=None,
-                  cabin_baggage=None, checked_baggage=None, service_type=None):
+                  cabin_baggage=None, checked_baggage=None, service_type=None,
+                  price_score=None, time_score=None, total_score=None):
     with _connect(db_path) as conn:
         conn.execute(
             """INSERT INTO flights (scrape_run_id, airline, flight_number,
@@ -74,14 +78,16 @@ def insert_flight(db_path, scrape_run_id, airline, flight_number,
                duration_minutes, price_thb, aircraft_type, num_stops,
                is_direct, is_excluded_airline,
                best_booking_price, best_booking_source,
-               cabin_baggage, checked_baggage, service_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               cabin_baggage, checked_baggage, service_type,
+               price_score, time_score, total_score)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (scrape_run_id, airline, flight_number,
              departure_airport, departure_time, arrival_airport, arrival_time,
              duration_minutes, price_thb, aircraft_type, num_stops,
              is_direct, is_excluded_airline,
              best_booking_price, best_booking_source,
-             cabin_baggage, checked_baggage, service_type)
+             cabin_baggage, checked_baggage, service_type,
+             price_score, time_score, total_score)
         )
 
 

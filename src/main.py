@@ -74,6 +74,9 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
             cabin_baggage=f.get('cabin_baggage'),
             checked_baggage=f.get('checked_baggage'),
             service_type=f.get('service_type'),
+            price_score=f.get('price_score'),
+            time_score=f.get('time_score'),
+            total_score=f.get('total_score'),
         )
 
     prev_best = get_previous_best_price(db_path, route, date)
