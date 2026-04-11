@@ -561,6 +561,12 @@ AIRPORT_SHORT = {
     "Don Mueang International Airport": "DMK",
     "Danang International Airport": "DAD",
     "Da Nang International Airport": "DAD",
+    "Kansai International Airport": "KIX",
+    "Narita International Airport": "NRT",
+    "Haneda Airport": "HND",
+    "Tokyo Haneda Airport": "HND",
+    "Osaka Itami Airport": "ITM",
+    "Chubu Centrair International Airport": "NGO",
 }
 
 

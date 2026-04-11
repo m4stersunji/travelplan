@@ -12,21 +12,23 @@ from config import GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_PATH
 logger = logging.getLogger(__name__)
 
 CONFIG_HEADERS = [
-    'Trip Name', 'From', 'To', 'Go Date', 'Back Date',
+    'Trip Name', 'From', 'To', 'Return From', 'Go Date', 'Back Date',
     'Prefer Depart', 'Prefer Arrive', 'Active', 'Added By', 'Status'
 ]
 
 EXAMPLE_ROWS = [
-    ['Danang', 'Bangkok', 'Danang', '2026-05-29', '2026-06-01', '12:00', '18:00', 'Yes', 'Owner', ''],
-    ['Danang', 'Bangkok', 'Danang', '2026-05-30', '2026-06-02', '12:00', '18:00', 'Yes', 'Owner', ''],
-    ['', '', '', '', '', '', '', '', '', ''],
-    ['HOW TO ADD A TRIP:', '', '', '', '', '', '', '', '', ''],
-    ['1. Add a new row above this line', '', '', '', '', '', '', '', '', ''],
-    ['2. Trip Name = any name', '', '', '', '', '', '', '', '', ''],
-    ['3. From/To = city name (Bangkok, Tokyo, Osaka, Danang, Seoul...)', '', '', '', '', '', '', '', '', ''],
-    ['4. Go Date/Back Date = YYYY-MM-DD', '', '', '', '', '', '', '', '', ''],
-    ['5. Prefer Depart/Arrive = time (12:00 = noon, 18:00 = 6pm)', '', '', '', '', '', '', '', '', ''],
-    ['6. Active = Yes or No | Status column updates automatically', '', '', '', '', '', '', '', '', ''],
+    ['Danang', 'Bangkok', 'Danang', '', '2026-05-29', '2026-06-01', '12:00', '18:00', 'Yes', 'Owner', ''],
+    ['Danang', 'Bangkok', 'Danang', '', '2026-05-30', '2026-06-02', '12:00', '18:00', 'Yes', 'Owner', ''],
+    ['Osaka', 'Bangkok', 'Osaka', 'Tokyo', '2026-10-17', '2026-10-24', '10:00', '18:00', 'Yes', 'Owner', ''],
+    ['Osaka', 'Bangkok', 'Osaka', 'Tokyo', '2026-10-17', '2026-10-25', '10:00', '18:00', 'Yes', 'Owner', ''],
+    ['', '', '', '', '', '', '', '', '', '', ''],
+    ['HOW TO ADD A TRIP:', '', '', '', '', '', '', '', '', '', ''],
+    ['1. Trip Name = any name', '', '', '', '', '', '', '', '', '', ''],
+    ['2. From/To = outbound cities', '', '', '', '', '', '', '', '', '', ''],
+    ['3. Return From = leave blank if same as To, or set different city', '', '', '', '', '', '', '', '', '', ''],
+    ['4. Go Date/Back Date = YYYY-MM-DD', '', '', '', '', '', '', '', '', '', ''],
+    ['5. Prefer Depart/Arrive = time (10:00, 12:00, 18:00)', '', '', '', '', '', '', '', '', '', ''],
+    ['6. Active = Yes or No', '', '', '', '', '', '', '', '', '', ''],
 ]
 
 
@@ -88,11 +90,15 @@ def load_routes_from_sheet():
 
             origin = str(row.get('From', '')).strip()
             destination = str(row.get('To', '')).strip()
+            return_from = str(row.get('Return From', '')).strip()
             go_date = str(row.get('Go Date', '')).strip()
             back_date = str(row.get('Back Date', '')).strip()
             trip_name = str(row.get('Trip Name', '')).strip()
             prefer_depart = str(row.get('Prefer Depart', '12:00')).strip()
             prefer_arrive = str(row.get('Prefer Arrive', '18:00')).strip()
+
+            # Return city: use "Return From" if set, otherwise same as "To"
+            return_origin = return_from if return_from else destination
 
             if not origin or not destination or not go_date or not back_date:
                 continue
@@ -114,8 +120,9 @@ def load_routes_from_sheet():
             # Build route code from first 3 chars of city name (simplified)
             origin_code = _city_to_code(origin)
             dest_code = _city_to_code(destination)
+            return_code = _city_to_code(return_origin)
             route_code_out = f"{origin_code}-{dest_code}"
-            route_code_back = f"{dest_code}-{origin_code}"
+            route_code_back = f"{return_code}-{origin_code}"
 
             go_label = go_dt.strftime('%d %b')
             back_label = back_dt.strftime('%d %b')
@@ -136,9 +143,9 @@ def load_routes_from_sheet():
                 "score_mode": "departure",
             })
 
-            # Return
+            # Return (may be from different city, e.g., Tokyo instead of Osaka)
             search_routes.append({
-                "origin": destination,
+                "origin": return_origin,
                 "destination": origin,
                 "date": back_date,
                 "label": f"{route_code_back}-{back_label.replace(' ', '')}",
@@ -206,11 +213,11 @@ def write_config_status(statuses):
         gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_PATH)
         sh = gc.open_by_key(GOOGLE_SHEET_ID)
         ws = sh.worksheet('Config')
-        # Ensure sheet has enough columns for Status (col J = 10)
-        if ws.col_count < 10:
-            ws.resize(cols=10)
+        # Status is column K (11) now with "Return From" added
+        if ws.col_count < 11:
+            ws.resize(cols=11)
         for row_idx, status_text in statuses:
-            ws.update_acell(f'J{row_idx}', status_text)
+            ws.update_acell(f'K{row_idx}', status_text)
         logger.info(f"Config status updated for {len(statuses)} trips")
     except Exception as e:
         logger.error(f"Failed to write config status: {e}")
