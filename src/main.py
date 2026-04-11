@@ -100,10 +100,13 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
     logger.info(f"Done {route} {date}: {len(flights)} flights, best ฿{current_best:,}" if current_best else f"Done {route} {date}: {len(flights)} flights")
 
     return {
-        'route': route, 'search_date': date, 'date_label': date_label,
+        'route': route, 'route_code': route_code,
+        'search_date': date, 'date_label': date_label,
         'flights': flights, 'prev_best': prev_best, 'lowest_ever': lowest_ever,
         'scrape_count': scrape_count, 'price_history': price_history,
         'avg_price': avg_price, 'success': True,
+        'trip_name': kwargs.get('trip_name', 'Default'),
+        'score_mode': kwargs.get('score_mode', 'departure'),
     }
 
 
@@ -152,6 +155,7 @@ def main():
             data_dir=DATA_DIR,
             ideal_hour=route.get('ideal_hour'),
             score_mode=route.get('score_mode'),
+            trip_name=route.get('trip_name', 'Default'),
         )
         route_results.append(result)
 

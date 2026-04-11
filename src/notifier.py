@@ -61,33 +61,32 @@ def build_flex_message(route_results, valid_combos, top_n=5):
     trips = group_by_trip(route_results)
 
     for trip_name, results in trips.items():
-        outbound = [r for r in results if r.get('route_code', r['route'])[:3] == r['route'][:3]]
-        inbound = [r for r in results if r not in outbound]
+        # Use score_mode to detect direction (set by sheets_config)
+        outbound = [r for r in results if r.get('score_mode') == 'departure']
+        inbound = [r for r in results if r.get('score_mode') == 'arrival']
 
-        # Detect direction from route codes
-        all_codes = [r.get('route_code', r['route']) for r in results]
-        outbound = []
-        inbound = []
-        for r in results:
-            code = r.get('route_code', r['route'])
-            # First route code seen is outbound direction
-            if not outbound or code == outbound[0].get('route_code', outbound[0]['route']):
-                outbound.append(r)
+        # Fallback: if score_mode not set, use route_code
+        if not outbound and not inbound:
+            codes = list(set(r.get('route_code', '') for r in results))
+            if len(codes) >= 2:
+                outbound = [r for r in results if r.get('route_code') == codes[0]]
+                inbound = [r for r in results if r.get('route_code') != codes[0]]
             else:
-                inbound.append(r)
+                outbound = results
+                inbound = []
 
         # Summary bubble
         summary = _build_summary(trip_name, outbound, inbound, results, valid_combos)
         if summary:
             bubbles.append(summary)
 
-        # Route bubbles
+        # Route bubbles with trip name in header
         for r in outbound:
-            b = _build_route_bubble(r, "GO", "#1DB446", top_n)
+            b = _build_route_bubble(r, "GO", "#1DB446", top_n, trip_name)
             if b:
                 bubbles.append(b)
         for r in inbound:
-            b = _build_route_bubble(r, "BACK", "#0367D3", top_n)
+            b = _build_route_bubble(r, "BACK", "#0367D3", top_n, trip_name)
             if b:
                 bubbles.append(b)
 
@@ -167,7 +166,7 @@ def _build_summary(trip_name, outbound, inbound, all_results, valid_combos):
     return _wrap_bubble(trip_name, "#2C2C2C", contents)
 
 
-def _build_route_bubble(route_data, direction, color, top_n):
+def _build_route_bubble(route_data, direction, color, top_n, trip_name=""):
     """Route card with top flights sorted by score."""
     flights = sorted(route_data['flights'], key=lambda f: f.get('total_score', 0), reverse=True)[:top_n]
     if not flights:
@@ -239,9 +238,10 @@ def _build_route_bubble(route_data, direction, color, top_n):
         "type": "bubble", "size": "kilo",
         "header": {"type": "box", "layout": "vertical", "backgroundColor": color,
                    "paddingAll": "md", "contents": [
-                       {"type": "text", "text": direction, "color": "#FFFFFF", "size": "xs", "weight": "bold"},
-                       {"type": "text", "text": route_data['date_label'], "color": "#FFFFFF",
-                        "size": "xl", "weight": "bold"},
+                       {"type": "text", "text": f"{trip_name} {direction}" if trip_name else direction,
+                        "color": "#FFFFFF", "size": "xs", "weight": "bold"},
+                       {"type": "text", "text": f"{route_data['date_label']} {route_data.get('route_code', '')}",
+                        "color": "#FFFFFF", "size": "lg", "weight": "bold"},
                    ]},
         "body": {"type": "box", "layout": "vertical", "spacing": "sm",
                  "paddingAll": "md", "contents": body},
