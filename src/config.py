@@ -22,6 +22,12 @@ TOP_N_FLIGHTS = 20
 # Format: YYYY-MM-DD or empty string to disable
 SCRAPER_EXPIRY_DATE = os.getenv('SCRAPER_EXPIRY_DATE', '2026-05-05')
 
+# Notification frequency: send LINE only every N hours (scrape runs every hour)
+NOTIFY_EVERY_HOURS = int(os.getenv('NOTIFY_EVERY_HOURS', '6'))
+
+# Price alert: always notify if roundtrip drops below this (regardless of schedule)
+PRICE_ALERT_THRESHOLD = int(os.getenv('PRICE_ALERT_THRESHOLD', '5500'))
+
 EXCLUDED_AIRLINES = [
     "Emirates", "Qatar Airways", "Etihad", "Oman Air",
     "Saudia", "Gulf Air", "flynas", "Air Arabia",

@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime
 
-from config import SEARCH_ROUTES, VALID_COMBOS, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS, SCRAPER_EXPIRY_DATE
+from config import SEARCH_ROUTES, VALID_COMBOS, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS, SCRAPER_EXPIRY_DATE, NOTIFY_EVERY_HOURS, PRICE_ALERT_THRESHOLD
 from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history, get_average_price
 from scraper import scrape_flights, classify_flight, score_flights
 from notifier import send_line_notification, send_line_flex, build_flex_message, format_combined_message
@@ -110,6 +110,33 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
     }
 
 
+def _should_send_notification(route_results, valid_combos):
+    """Decide whether to send LINE this run.
+
+    Send if:
+    1. Current hour is divisible by NOTIFY_EVERY_HOURS (scheduled)
+    2. OR any roundtrip price dropped below PRICE_ALERT_THRESHOLD (urgent)
+    """
+    from flight_utils import best_price, eligible_flights, find_best_combos
+
+    # Check schedule
+    current_hour = datetime.now().hour
+    if current_hour % NOTIFY_EVERY_HOURS == 0:
+        logger.info(f"Scheduled notification (hour {current_hour}, every {NOTIFY_EVERY_HOURS}h)")
+        return True
+
+    # Check price alert
+    if PRICE_ALERT_THRESHOLD > 0:
+        outbound = [r for r in route_results if r.get('score_mode') == 'departure']
+        inbound = [r for r in route_results if r.get('score_mode') == 'arrival']
+        combos = find_best_combos(outbound, inbound, valid_combos)
+        if combos and combos[0]['total'] < PRICE_ALERT_THRESHOLD:
+            logger.info(f"PRICE ALERT! ฿{combos[0]['total']:,} < threshold ฿{PRICE_ALERT_THRESHOLD:,}")
+            return True
+
+    return False
+
+
 def main():
     setup_logging()
 
@@ -163,14 +190,18 @@ def main():
     import config as cfg
     current_combos = cfg.VALID_COMBOS
 
-    # Send ONE combined LINE notification (Flex card, fallback to text)
+    # Send LINE notification — only every N hours OR if price drops below alert threshold
     successful = [r for r in route_results if r['success']]
     if successful:
-        flex = build_flex_message(successful, current_combos)
-        if not send_line_flex(flex):
-            logger.warning("Flex message failed, falling back to text")
-            message = format_combined_message(successful)
-            send_line_notification(message)
+        should_notify = _should_send_notification(successful, current_combos)
+        if should_notify:
+            flex = build_flex_message(successful, current_combos)
+            if not send_line_flex(flex):
+                logger.warning("Flex message failed, falling back to text")
+                message = format_combined_message(successful)
+                send_line_notification(message)
+        else:
+            logger.info("Skipping LINE (not scheduled this hour, no price alert)")
     else:
         logger.warning("No successful scrapes — skipping notification")
 

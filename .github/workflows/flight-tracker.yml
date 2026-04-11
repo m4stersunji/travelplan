@@ -2,8 +2,8 @@ name: Flight Price Tracker
 
 on:
   schedule:
-    # Every 4 hours (UTC) — offset minutes to avoid GitHub's busy :00 mark
-    - cron: '17 */4 * * *'
+    # Every 2 hours — LINE notifies every 6h or on price alert
+    - cron: '17 */2 * * *'
   workflow_dispatch:  # Manual trigger button
 
 jobs:
