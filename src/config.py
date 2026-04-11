@@ -29,15 +29,20 @@ EXCLUDED_AIRLINES = [
 
 # Use city names to include all airports (BKK Suvarnabhumi + DMK Don Mueang)
 SEARCH_ROUTES = [
-    {"origin": "Bangkok", "destination": "Danang", "date": "2026-05-29", "label": "BKK-DAD-May29", "route_code": "BKK-DAD"},
-    {"origin": "Bangkok", "destination": "Danang", "date": "2026-05-30", "label": "BKK-DAD-May30", "route_code": "BKK-DAD"},
-    {"origin": "Danang", "destination": "Bangkok", "date": "2026-06-01", "label": "DAD-BKK-Jun01", "route_code": "DAD-BKK"},
-    {"origin": "Danang", "destination": "Bangkok", "date": "2026-06-02", "label": "DAD-BKK-Jun02", "route_code": "DAD-BKK"},
+    # Danang
+    {"origin": "Bangkok", "destination": "Danang", "date": "2026-05-29", "label": "BKK-DAD-May29", "route_code": "BKK-DAD", "trip_name": "Danang", "score_mode": "departure"},
+    {"origin": "Bangkok", "destination": "Danang", "date": "2026-05-30", "label": "BKK-DAD-May30", "route_code": "BKK-DAD", "trip_name": "Danang", "score_mode": "departure"},
+    {"origin": "Danang", "destination": "Bangkok", "date": "2026-06-01", "label": "DAD-BKK-Jun01", "route_code": "DAD-BKK", "trip_name": "Danang", "score_mode": "arrival"},
+    {"origin": "Danang", "destination": "Bangkok", "date": "2026-06-02", "label": "DAD-BKK-Jun02", "route_code": "DAD-BKK", "trip_name": "Danang", "score_mode": "arrival"},
+    # Osaka
+    {"origin": "Bangkok", "destination": "Osaka", "date": "2026-10-17", "label": "BKK-KIX-Oct17", "route_code": "BKK-KIX", "trip_name": "Osaka", "score_mode": "departure"},
+    {"origin": "Tokyo", "destination": "Bangkok", "date": "2026-10-24", "label": "TYO-BKK-Oct24", "route_code": "TYO-BKK", "trip_name": "Osaka", "score_mode": "arrival"},
+    {"origin": "Tokyo", "destination": "Bangkok", "date": "2026-10-25", "label": "TYO-BKK-Oct25", "route_code": "TYO-BKK", "trip_name": "Osaka", "score_mode": "arrival"},
 ]
 
-# Valid trip combos (go_date → back_date)
-# Only these pairings are shown as roundtrip options
 VALID_COMBOS = [
-    ("2026-05-29", "2026-06-01"),  # Option A: 29 May → 1 Jun (3 nights)
-    ("2026-05-30", "2026-06-02"),  # Option B: 30 May → 2 Jun (3 nights)
+    ("2026-05-29", "2026-06-01"),  # Danang A: 29 May → 1 Jun
+    ("2026-05-30", "2026-06-02"),  # Danang B: 30 May → 2 Jun
+    ("2026-10-17", "2026-10-24"),  # Osaka A: 17 Oct → 24 Oct
+    ("2026-10-17", "2026-10-25"),  # Osaka B: 17 Oct → 25 Oct
 ]

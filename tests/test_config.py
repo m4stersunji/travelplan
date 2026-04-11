@@ -20,7 +20,7 @@ def test_search_routes_has_danang_trip():
 def test_search_routes_have_route_codes():
     for r in SEARCH_ROUTES:
         assert 'route_code' in r
-        assert r['route_code'] in ('BKK-DAD', 'DAD-BKK')
+        assert r['route_code'] in ('BKK-DAD', 'DAD-BKK', 'BKK-KIX', 'TYO-BKK')
 
 
 def test_excluded_airlines_contains_middle_east_carriers():
