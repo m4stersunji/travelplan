@@ -139,8 +139,15 @@ def _update_all_flights(sh, route_results):
 
     if rows:
         existing = ws.get_all_values()
+        # Keep only last 30 days (~2400 rows) — archive old data
+        max_rows = 2500
+        if len(existing) > max_rows:
+            keep_from = len(existing) - max_rows + 1  # +1 for header
+            ws.delete_rows(2, keep_from)  # Delete oldest rows (keep header)
+            existing = ws.get_all_values()
+            logger.info(f"All Flights: trimmed to {len(existing)} rows")
+
         next_row = len(existing) + 1
-        # Auto-expand if near row limit
         if next_row + len(rows) > ws.row_count:
             ws.add_rows(len(rows) + 500)
         ws.update(f'A{next_row}', rows)
