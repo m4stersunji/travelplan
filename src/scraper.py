@@ -33,10 +33,21 @@ def build_google_flights_url(origin: str, destination: str, date: str) -> str:
     )
 
 
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.177 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.177 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+]
+
+
 def create_driver():
-    """Creates a headless Chrome Selenium WebDriver with anti-detection."""
+    """Creates a headless Chrome Selenium WebDriver with anti-detection + random user-agent."""
     if not SELENIUM_AVAILABLE:
         raise RuntimeError("selenium is not installed")
+
+    import random
 
     options = Options()
     options.add_argument("--headless=new")
@@ -45,15 +56,10 @@ def create_driver():
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--lang=en-US")
-    # Anti-detection: prevent Google from detecting headless/bot
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/146.0.7680.177 Safari/537.36"
-    )
+    options.add_argument(f"--user-agent={random.choice(_USER_AGENTS)}")
 
     driver = webdriver.Chrome(options=options)
     # Remove navigator.webdriver flag
@@ -67,10 +73,10 @@ def create_driver():
     return driver
 
 
-def scrape_flights(origin: str, destination: str, date: str) -> list:
+def scrape_flights(origin: str, destination: str, date: str, check_bookings: bool = True) -> list:
     """
     Uses Selenium to load Google Flights and scrape flight data.
-    Returns a list of flight dicts, or an empty list on failure.
+    check_bookings: if False, skip clicking individual flights for 3rd party prices (fast mode).
     """
     if not SELENIUM_AVAILABLE:
         logger.error("selenium is not available")
@@ -78,6 +84,10 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
 
     url = build_google_flights_url(origin, destination, date)
     import time
+    import random
+
+    # Random delay between routes to look more human (1-4 seconds)
+    time.sleep(random.uniform(1, 4))
 
     # Retry up to 2 times if page fails to render
     for attempt in range(2):
@@ -85,7 +95,7 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
         try:
             driver = create_driver()
             driver.get(url)
-            time.sleep(8)
+            time.sleep(random.uniform(7, 10))  # Randomize wait
 
             try:
                 WebDriverWait(driver, 15).until(
@@ -94,7 +104,6 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
             except TimeoutException:
                 logger.warning("Timed out waiting for flight results")
 
-            # Parse initial flights (ungrouped — typically 6-10 per airline)
             page_source = driver.page_source
             flights = parse_flight_data(page_source)
 
@@ -104,9 +113,11 @@ def scrape_flights(origin: str, destination: str, date: str) -> list:
                 time.sleep(3)
                 continue
 
-            # Get booking options for ALL flights
-            if flights:
+            # Only check booking prices on scheduled notification runs (saves ~60 Google requests)
+            if flights and check_bookings:
                 _enrich_all_bookings(driver, flights)
+            elif flights:
+                logger.info(f"Fast mode: skipping booking checks ({len(flights)} flights)")
 
             return flights
 

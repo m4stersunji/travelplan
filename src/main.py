@@ -32,7 +32,8 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
     route = route_code
     date_label = datetime.strptime(date, '%Y-%m-%d').strftime('%d %b')
 
-    raw_flights = scrape_flights(origin, destination, date)
+    check_bookings = kwargs.get('check_bookings', True)
+    raw_flights = scrape_flights(origin, destination, date, check_bookings=check_bookings)
 
     if not raw_flights:
         logger.warning(f"No flights found for {route} on {date}")
@@ -169,6 +170,12 @@ def main():
         active_routes = SEARCH_ROUTES
         logger.info(f"Using {len(active_routes)} routes from config.py (Sheet config not available)")
 
+    # Determine if this is a notification run (check bookings) or fast run (prices only)
+    current_hour = datetime.now().hour
+    is_notify_run = current_hour % NOTIFY_EVERY_HOURS == 0
+    mode = "FULL (with bookings)" if is_notify_run else "FAST (prices only)"
+    logger.info(f"Mode: {mode}")
+
     # Collect all results
     route_results = []
     for route in active_routes:
@@ -183,6 +190,7 @@ def main():
             ideal_hour=route.get('ideal_hour'),
             score_mode=route.get('score_mode'),
             trip_name=route.get('trip_name', 'Default'),
+            check_bookings=is_notify_run,
         )
         route_results.append(result)
 
