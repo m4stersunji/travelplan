@@ -106,14 +106,25 @@ def _build_summary(trip_name, outbound, inbound, all_results, valid_combos):
     go = combo['go_flight']
     back = combo['back_flight']
 
-    # Best deal price
-    contents.append({"type": "text", "text": "BEST DEAL", "size": "xxs", "color": "#AAAAAA"})
+    # Best direct deal
+    contents.append({"type": "text", "text": "BEST DIRECT", "size": "xxs", "color": "#AAAAAA"})
     contents.append({"type": "text", "text": f"฿{combo['total']:,} roundtrip",
                      "size": "xxl", "weight": "bold", "color": "#1DB446"})
 
-    # GO + BACK flights
     _add_flight_row(contents, "GO", combo['go_route']['date_label'], go)
     _add_flight_row(contents, "BACK", combo['back_route']['date_label'], back)
+
+    # Best transit deal (may be cheaper)
+    transit_combo = _find_cheapest_transit_combo(outbound, inbound, valid_combos)
+    if transit_combo and transit_combo['total'] < combo['total']:
+        saving = combo['total'] - transit_combo['total']
+        contents.append({"type": "separator", "margin": "md"})
+        contents.append({"type": "text", "text": f"CHEAPEST (transit, save ฿{saving:,})",
+                         "size": "xxs", "color": "#FF8C00", "margin": "md"})
+        contents.append({"type": "text", "text": f"฿{transit_combo['total']:,} roundtrip",
+                         "size": "lg", "weight": "bold", "color": "#FF8C00"})
+        _add_flight_row(contents, "GO", transit_combo['go_route']['date_label'], transit_combo['go_flight'])
+        _add_flight_row(contents, "BACK", transit_combo['back_route']['date_label'], transit_combo['back_flight'])
 
     contents.append({"type": "separator", "margin": "md"})
 
@@ -226,6 +237,40 @@ def _build_route_bubble(route_data, direction, color, top_n):
         "body": {"type": "box", "layout": "vertical", "spacing": "sm",
                  "paddingAll": "md", "contents": body},
     }
+
+
+def _find_cheapest_transit_combo(outbound, inbound, valid_combos):
+    """Find cheapest roundtrip including transit flights."""
+    out_by_date = {r['search_date']: r for r in outbound}
+    in_by_date = {r['search_date']: r for r in inbound}
+
+    combos = []
+    for go_date, back_date in valid_combos:
+        out_r = out_by_date.get(go_date)
+        in_r = in_by_date.get(back_date)
+        if not out_r or not in_r:
+            continue
+
+        # All flights with price > 0 (not just direct)
+        go_all = [f for f in out_r.get('flights', []) if f.get('price_thb', 0) > 0 and not f.get('is_excluded_airline')]
+        back_all = [f for f in in_r.get('flights', []) if f.get('price_thb', 0) > 0 and not f.get('is_excluded_airline')]
+        if not go_all or not back_all:
+            continue
+
+        cheapest_go = min(go_all, key=best_price)
+        cheapest_back = min(back_all, key=best_price)
+
+        combos.append({
+            'go_flight': cheapest_go,
+            'back_flight': cheapest_back,
+            'go_route': out_r,
+            'back_route': in_r,
+            'total': best_price(cheapest_go) + best_price(cheapest_back),
+        })
+
+    if not combos:
+        return None
+    return min(combos, key=lambda c: c['total'])
 
 
 def _add_flight_row(contents, direction, date_label, f):
