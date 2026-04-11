@@ -55,7 +55,7 @@ def send_line_flex(flex_container):
 
 # ─── Flex Message Builder ───────────────────────────────
 
-def build_flex_message(route_results, valid_combos, top_n=5):
+def build_flex_message(route_results, valid_combos, top_n=3):
     """Build LINE Flex carousel. Supports multiple trips dynamically."""
     bubbles = []
     trips = group_by_trip(route_results)
@@ -94,7 +94,7 @@ def build_flex_message(route_results, valid_combos, top_n=5):
 
 
 def _build_summary(trip_name, outbound, inbound, all_results, valid_combos):
-    """Summary card: best deal + verdict + where to book."""
+    """Summary card — price, verdict, flights. One screen, no scroll."""
     contents = []
 
     combo = find_best_scored_combo(outbound, inbound, valid_combos)
@@ -105,29 +105,12 @@ def _build_summary(trip_name, outbound, inbound, all_results, valid_combos):
     go = combo['go_flight']
     back = combo['back_flight']
 
-    # Best direct deal
+    # 1. BIG PRICE
     contents.append({"type": "text", "text": "BEST DIRECT", "size": "xxs", "color": "#AAAAAA"})
-    contents.append({"type": "text", "text": f"฿{combo['total']:,} roundtrip",
+    contents.append({"type": "text", "text": f"฿{combo['total']:,}",
                      "size": "xxl", "weight": "bold", "color": "#1DB446"})
 
-    _add_flight_row(contents, "GO", combo['go_route']['date_label'], go)
-    _add_flight_row(contents, "BACK", combo['back_route']['date_label'], back)
-
-    # Best transit deal (may be cheaper)
-    transit_combo = _find_cheapest_transit_combo(outbound, inbound, valid_combos)
-    if transit_combo and transit_combo['total'] < combo['total']:
-        saving = combo['total'] - transit_combo['total']
-        contents.append({"type": "separator", "margin": "md"})
-        contents.append({"type": "text", "text": f"CHEAPEST (transit, save ฿{saving:,})",
-                         "size": "xxs", "color": "#FF8C00", "margin": "md"})
-        contents.append({"type": "text", "text": f"฿{transit_combo['total']:,} roundtrip",
-                         "size": "lg", "weight": "bold", "color": "#FF8C00"})
-        _add_flight_row(contents, "GO", transit_combo['go_route']['date_label'], transit_combo['go_flight'])
-        _add_flight_row(contents, "BACK", transit_combo['back_route']['date_label'], transit_combo['back_flight'])
-
-    contents.append({"type": "separator", "margin": "md"})
-
-    # Verdict
+    # 2. VERDICT (immediately after price)
     best_r = max(all_results, key=lambda r: r.get('scrape_count', 0))
     trend = get_trend(best_r.get('price_history', []))
     days = days_until(best_r.get('search_date', ''))
@@ -135,35 +118,53 @@ def _build_summary(trip_name, outbound, inbound, all_results, valid_combos):
         best_price(go), best_r.get('avg_price'), best_r.get('lowest_ever'),
         trend, days, best_r.get('scrape_count', 0)
     )
-
     v_color = "#1DB446" if "BUY" in v or "GOOD" in v else "#FF8C00" if "WAIT" in v else "#E53935"
     contents.append({"type": "text", "text": v, "size": "sm", "weight": "bold",
-                     "color": v_color, "margin": "md", "wrap": True})
+                     "color": v_color, "wrap": True})
 
-    # Context
-    avg = best_r.get('avg_price')
-    lowest = best_r.get('lowest_ever')
-    if avg and lowest:
-        contents.append({"type": "text", "size": "xxs", "color": "#999999", "wrap": True,
-                         "text": f"Avg ฿{avg:,} | Low ฿{lowest:,} | {trend}" + (f" | {days}d left" if days else "")})
-    elif best_r.get('scrape_count', 0) < 3:
-        contents.append({"type": "text", "size": "xxs", "color": "#999999",
-                         "text": f"Check #{best_r.get('scrape_count', 0)} — need 3+ for advice"})
+    contents.append({"type": "separator", "margin": "md"})
 
-    # Where to book
-    go_src = go.get('best_booking_source', '')
-    back_src = back.get('best_booking_source', '')
-    sources = set(filter(None, [go_src, back_src]))
-    if sources:
+    # 3. GO + BACK (compact: price + airline + time only)
+    _add_compact_flight(contents, "GO", combo['go_route']['date_label'], go)
+    _add_compact_flight(contents, "BACK", combo['back_route']['date_label'], back)
+
+    # 4. CHEAPEST 1-STOP (if cheaper)
+    transit = _find_cheapest_transit_combo(outbound, inbound, valid_combos)
+    if transit and transit['total'] < combo['total']:
+        saving = combo['total'] - transit['total']
+        tg = transit['go_flight']
+        tb = transit['back_flight']
+        via_go = tg.get('layover_airport', '')[:12]
+        via_back = tb.get('layover_airport', '')[:12]
         contents.append({"type": "separator", "margin": "md"})
-        contents.append({"type": "text", "text": f"Book: {' | '.join(sources)}",
-                         "size": "xs", "weight": "bold", "color": "#0367D3", "margin": "md"})
+        contents.append({"type": "text", "margin": "md", "size": "xs", "weight": "bold", "color": "#FF8C00",
+                         "text": f"1-STOP ฿{transit['total']:,} (save ฿{saving:,})"})
+        contents.append({"type": "text", "size": "xxs", "color": "#999999", "wrap": True,
+                         "text": f"GO ฿{best_price(tg):,} {tg['airline'][:12]} via {via_go}"})
+        contents.append({"type": "text", "size": "xxs", "color": "#999999", "wrap": True,
+                         "text": f"BACK ฿{best_price(tb):,} {tb['airline'][:12]} via {via_back}"})
 
-    # Timestamp
+    # 5. TIMESTAMP
     contents.append({"type": "text", "size": "xxs", "color": "#CCCCCC", "margin": "md",
                      "text": datetime.now().strftime('%d %b %H:%M')})
 
     return _wrap_bubble(trip_name, "#2C2C2C", contents)
+
+
+def _add_compact_flight(contents, direction, date_label, f):
+    """One-line flight for summary. No score, no baggage, no source."""
+    price = best_price(f)
+    dep = f.get('departure_time', '?')
+    arr = f.get('arrival_time', '?')
+    contents.append({
+        "type": "box", "layout": "horizontal", "margin": "sm",
+        "contents": [
+            {"type": "text", "text": f"{direction} {date_label}",
+             "size": "xxs", "color": "#AAAAAA", "flex": 3},
+            {"type": "text", "text": f"฿{price:,} {f['airline'][:12]} {dep}-{arr}",
+             "size": "xxs", "color": "#333333", "flex": 7},
+        ]
+    })
 
 
 def _build_route_bubble(route_data, direction, color, top_n, trip_name=""):
