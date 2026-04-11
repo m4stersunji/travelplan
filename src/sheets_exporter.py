@@ -140,6 +140,9 @@ def _update_all_flights(sh, route_results):
     if rows:
         existing = ws.get_all_values()
         next_row = len(existing) + 1
+        # Auto-expand if near row limit
+        if next_row + len(rows) > ws.row_count:
+            ws.add_rows(len(rows) + 500)
         ws.update(f'A{next_row}', rows)
 
 
