@@ -55,7 +55,7 @@ def send_line_flex(flex_container):
 
 # ─── Flex Message Builder ───────────────────────────────
 
-def build_flex_message(route_results, valid_combos, top_n=3):
+def build_flex_message(route_results, valid_combos, top_n=7):
     """Build LINE Flex carousel. Supports multiple trips dynamically."""
     bubbles = []
     trips = group_by_trip(route_results)

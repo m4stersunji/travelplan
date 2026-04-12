@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { appendRow } from "@/lib/sheets";
 
+function isAuthorized(req: NextRequest): boolean {
+  const secret = process.env.API_SECRET;
+  if (!secret) return true; // No secret configured — allow all (backwards compatible)
+  return req.headers.get("x-api-key") === secret;
+}
+
 export async function POST(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json();
     const { tripName, from, to, goDate, backDate, preferDepart, preferArrive, addedBy } = body;

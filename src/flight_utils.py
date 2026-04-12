@@ -21,17 +21,27 @@ def eligible_flights(flights):
 
 
 def get_trend(price_history):
-    """Simple trend from recent price history."""
+    """3-point averaged trend from recent price history."""
     if len(price_history) < 2:
         return "Not enough data"
     prices = [h['best_price'] for h in price_history if h.get('best_price')]
     if len(prices) < 2:
         return "Not enough data"
-    newest = prices[0]
-    oldest = prices[-1]
-    if newest < oldest:
+    # Use average of last 3 vs average of prior 3 for stability
+    recent = prices[:min(3, len(prices))]
+    older = prices[min(3, len(prices)):min(6, len(prices))]
+    if not older:
+        # Only 2-3 points — compare newest vs oldest
+        if prices[0] < prices[-1]:
+            return "Falling"
+        elif prices[0] > prices[-1]:
+            return "Rising"
+        return "Stable"
+    avg_recent = sum(recent) / len(recent)
+    avg_older = sum(older) / len(older)
+    if avg_recent < avg_older * 0.98:
         return "Falling"
-    elif newest > oldest:
+    elif avg_recent > avg_older * 1.02:
         return "Rising"
     return "Stable"
 

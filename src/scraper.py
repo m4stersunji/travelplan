@@ -1,3 +1,4 @@
+import json
 import re
 import logging
 from datetime import datetime
@@ -103,6 +104,20 @@ def scrape_flights(origin: str, destination: str, date: str, check_bookings: boo
                 )
             except TimeoutException:
                 logger.warning("Timed out waiting for flight results")
+
+            # Detect Google blocks
+            current_url = driver.current_url
+            page_title = driver.title
+            if '/sorry' in current_url or 'consent.google' in current_url:
+                logger.error(f"BLOCKED: Google CAPTCHA/consent page for {origin}→{destination}")
+                # Don't retry — wait for next scheduled run
+                return []
+            if '/explore' in current_url:
+                logger.error(f"BLOCKED: Redirected to /explore for {origin}→{destination} {date}")
+                return []
+            if 'unusual traffic' in page_title.lower():
+                logger.error(f"BLOCKED: Unusual traffic detected")
+                return []
 
             page_source = driver.page_source
             flights = parse_flight_data(page_source)
@@ -248,12 +263,16 @@ def _enrich_all_bookings(driver, flights):
             continue
 
         try:
+            # Escape values for safe JS interpolation
+            safe_price = json.dumps(str(price))[1:-1]  # strip quotes
+            safe_time = json.dumps(dep_time_12h)[1:-1]
+
             # Click the flight → opens booking page
             js = f'''
-            var links = document.querySelectorAll('[role="link"][aria-label*="{price} Thai baht"]');
+            var links = document.querySelectorAll('[role="link"][aria-label*="{safe_price} Thai baht"]');
             for (var l of links) {{
                 var label = l.getAttribute('aria-label') || '';
-                if (label.includes('{dep_time_12h}')) {{
+                if (label.includes('{safe_time}')) {{
                     l.click();
                     return true;
                 }}
@@ -323,142 +342,6 @@ def _enrich_all_bookings(driver, flights):
 
     total_enriched = checked + filled
     logger.info(f"Booking data: {checked} clicked + {filled} filled = {total_enriched}/{len(flights)} total")
-
-
-def _get_booking_data(driver, flights):
-    """Get 3rd party booking prices for ALL flights.
-    Called BEFORE expanding groups (cleaner DOM = more booking sources).
-    Returns dict keyed by 'airline|price' with booking fields.
-    """
-    import time
-    result = {}
-
-    # Check all flights, sorted by price (cheapest first)
-    to_check = sorted(flights, key=lambda f: f['price_thb'])
-
-    for flight in to_check:
-        price = flight['price_thb']
-        dep_time_12h = _to_12h(flight.get('departure_time', ''))
-        if not dep_time_12h:
-            continue
-
-        # Skip if we already have data for same airline+price
-        key = f"{flight['airline']}|{price}"
-        if key in result:
-            continue
-
-        try:
-            js = f'''
-            var links = document.querySelectorAll('[role="link"][aria-label*="{price} Thai baht"]');
-            for (var l of links) {{
-                if (l.getAttribute('aria-label').includes('{dep_time_12h}')) {{
-                    l.click();
-                    return true;
-                }}
-            }}
-            return false;
-            '''
-            clicked = driver.execute_script(js)
-            if not clicked:
-                continue
-
-            time.sleep(2)
-
-            # Expand "more booking options"
-            try:
-                more = driver.find_elements(By.XPATH, '//*[contains(text(), "more booking options")]')
-                for btn in more:
-                    driver.execute_script('arguments[0].click();', btn)
-                    time.sleep(1)
-            except Exception:
-                pass
-
-            body_text = driver.find_element(By.TAG_NAME, 'body').text
-            bookings = _parse_booking_text(body_text)
-
-            if bookings:
-                cheapest = min(bookings, key=lambda x: x[1])
-                key = f"{flight['airline']}|{price}"
-                result[key] = {
-                    'booking_options': bookings,
-                    'best_booking_price': cheapest[1],
-                    'best_booking_source': cheapest[0],
-                }
-                logger.info(f"Booking: {flight['airline']} ฿{price:,} → best ฿{cheapest[1]:,} via {cheapest[0]} ({len(bookings)} sources)")
-
-            # Close panel
-            driver.execute_script(js)
-            time.sleep(1)
-
-        except Exception as e:
-            logger.debug(f"Booking check failed for {flight.get('airline')}: {e}")
-
-    return result
-
-
-def _enrich_booking_options(driver, flights):
-    """Click top direct flights to get 3rd party booking prices.
-    Enriches flight dicts with 'booking_options' and 'best_booking_price'.
-    """
-    import time
-
-    # Sort by price, get top 3 direct non-excluded flights to check
-    direct = [f for f in flights if f.get('num_stops', 1) == 0]
-    direct.sort(key=lambda f: f['price_thb'])
-    to_check = direct[:3]
-
-    for flight in to_check:
-        price = flight['price_thb']
-        dep_time_12h = _to_12h(flight.get('departure_time', ''))
-        if not dep_time_12h:
-            continue
-
-        try:
-            # Find and click the flight link using JS
-            js = f'''
-            var links = document.querySelectorAll('[role="link"][aria-label*="{price} Thai baht"]');
-            for (var l of links) {{
-                var label = l.getAttribute('aria-label') || '';
-                if (label.includes('{dep_time_12h}')) {{
-                    l.click();
-                    return true;
-                }}
-            }}
-            return false;
-            '''
-            clicked = driver.execute_script(js)
-            if not clicked:
-                continue
-
-            time.sleep(3)
-
-            # Expand "more booking options" if available
-            try:
-                more = driver.find_elements(By.XPATH, '//*[contains(text(), "more booking options")]')
-                for btn in more:
-                    driver.execute_script('arguments[0].click();', btn)
-                    time.sleep(1.5)
-            except Exception:
-                pass
-
-            # Extract booking options from visible text
-            body_text = driver.find_element(By.TAG_NAME, 'body').text
-            bookings = _parse_booking_text(body_text)
-
-            if bookings:
-                flight['booking_options'] = bookings
-                cheapest = min(bookings, key=lambda x: x[1])
-                flight['best_booking_price'] = cheapest[1]
-                flight['best_booking_source'] = cheapest[0]
-                logger.info(f"Booking: {flight['airline']} ฿{price:,} → best ฿{cheapest[1]:,} via {cheapest[0]}")
-
-            # Toggle close by clicking same element again
-            driver.execute_script(js)
-            time.sleep(1)
-
-        except Exception as e:
-            logger.debug(f"Booking check failed for {flight.get('airline')}: {e}")
-            continue
 
 
 def _parse_booking_text(body_text):
@@ -765,5 +648,3 @@ def _calc_time_score(flight, score_mode, ideal_hour):
     sigma = 3.0
     score = 10 * math.exp(-(diff ** 2) / (2 * sigma ** 2))
     return round(score, 1)
-
-    return ""

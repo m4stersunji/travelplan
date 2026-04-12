@@ -141,6 +141,15 @@ def _should_send_notification(route_results, valid_combos):
 def main():
     setup_logging()
 
+    # Prevent concurrent runs
+    import fcntl
+    lock_file = open(os.path.join(LOG_DIR, '.lock'), 'w')
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        logger.info("Another instance is running — skipping")
+        return
+
     # Auto-stop check
     if SCRAPER_EXPIRY_DATE:
         try:

@@ -52,6 +52,9 @@ def init_db(db_path):
                 is_lowest_ever  BOOLEAN,
                 alerted_at      DATETIME
             );
+            CREATE INDEX IF NOT EXISTS idx_scrape_runs_route_date ON scrape_runs(route, search_date, status);
+            CREATE INDEX IF NOT EXISTS idx_flights_run ON flights(scrape_run_id);
+            CREATE INDEX IF NOT EXISTS idx_flights_direct ON flights(is_direct, is_excluded_airline, price_thb);
         """)
 
 
@@ -101,8 +104,8 @@ def get_previous_best_price(db_path, route, search_date):
         if len(rows) < 2:
             return None
         row = conn.execute("""
-            SELECT MIN(price_thb) FROM flights
-            WHERE scrape_run_id = ? AND is_direct = 1 AND is_excluded_airline = 0
+            SELECT MIN(COALESCE(f.best_booking_price, f.price_thb)) FROM flights f
+            WHERE f.scrape_run_id = ? AND f.is_direct = 1 AND f.is_excluded_airline = 0
         """, (rows[1][0],)).fetchone()
         return row[0] if row and row[0] is not None else None
 
@@ -111,7 +114,7 @@ def get_average_price(db_path, route, search_date):
     with _connect(db_path) as conn:
         row = conn.execute("""
             SELECT AVG(best_price) FROM (
-                SELECT MIN(f.price_thb) as best_price
+                SELECT MIN(COALESCE(f.best_booking_price, f.price_thb)) as best_price
                 FROM flights f JOIN scrape_runs sr ON f.scrape_run_id = sr.id
                 WHERE sr.route = ? AND sr.search_date = ? AND sr.status = 'success'
                   AND f.is_direct = 1 AND f.is_excluded_airline = 0
@@ -124,7 +127,7 @@ def get_average_price(db_path, route, search_date):
 def get_lowest_ever_price(db_path, route, search_date):
     with _connect(db_path) as conn:
         row = conn.execute("""
-            SELECT MIN(f.price_thb)
+            SELECT MIN(COALESCE(f.best_booking_price, f.price_thb))
             FROM flights f JOIN scrape_runs sr ON f.scrape_run_id = sr.id
             WHERE sr.route = ? AND sr.search_date = ? AND sr.status = 'success'
               AND f.is_direct = 1 AND f.is_excluded_airline = 0
