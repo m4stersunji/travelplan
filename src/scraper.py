@@ -14,6 +14,14 @@ try:
 except ImportError:
     SELENIUM_AVAILABLE = False
 
+from health import (
+    with_retry,
+    validate_flights,
+    BlockedError,
+    EmptyResultsError,
+    SanityCheckError,
+)
+
 try:
     from lxml import html as lxml_html
     import cssselect
@@ -74,15 +82,9 @@ def create_driver():
     return driver
 
 
-def scrape_flights(origin: str, destination: str, date: str, check_bookings: bool = True) -> list:
-    """
-    Uses Selenium to load Google Flights and scrape flight data.
-    check_bookings: if False, skip clicking individual flights for 3rd party prices (fast mode).
-    """
-    if not SELENIUM_AVAILABLE:
-        logger.error("selenium is not available")
-        return []
-
+@with_retry(retries=2, backoff=30)
+def _scrape_flights_once(origin: str, destination: str, date: str, check_bookings: bool) -> list:
+    """Single scrape attempt. Raises retryable errors for the @with_retry decorator."""
     url = build_google_flights_url(origin, destination, date)
     import time
     import random
@@ -90,68 +92,70 @@ def scrape_flights(origin: str, destination: str, date: str, check_bookings: boo
     # Random delay between routes to look more human (1-4 seconds)
     time.sleep(random.uniform(1, 4))
 
-    # Retry up to 2 times if page fails to render
-    for attempt in range(2):
-        driver = None
+    driver = None
+    try:
+        driver = create_driver()
+        driver.get(url)
+        time.sleep(random.uniform(7, 10))
+
         try:
-            driver = create_driver()
-            driver.get(url)
-            time.sleep(random.uniform(7, 10))  # Randomize wait
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
+            )
+        except TimeoutException:
+            logger.warning("Timed out waiting for flight results")
 
+        # Detect Google blocks — raise so @with_retry rotates UA + waits
+        current_url = driver.current_url
+        page_title = driver.title
+        if '/sorry' in current_url or 'consent.google' in current_url:
+            raise BlockedError(f"CAPTCHA/consent page for {origin}->{destination}")
+        if '/explore' in current_url:
+            raise BlockedError(f"redirected to /explore for {origin}->{destination} {date}")
+        if 'unusual traffic' in page_title.lower():
+            raise BlockedError("unusual traffic detected")
+
+        page_source = driver.page_source
+        flights = parse_flight_data(page_source)
+
+        # Sanity check: raises EmptyResultsError or SanityCheckError if Google's shape drifted
+        validate_flights(flights)
+
+        # Only check booking prices on scheduled notification runs (saves ~60 Google requests)
+        if check_bookings:
+            _enrich_all_bookings(driver, flights)
+        else:
+            logger.info(f"Fast mode: skipping booking checks ({len(flights)} flights)")
+
+        return flights
+    finally:
+        if driver is not None:
             try:
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "[aria-label*='Thai baht']"))
-                )
-            except TimeoutException:
-                logger.warning("Timed out waiting for flight results")
-
-            # Detect Google blocks
-            current_url = driver.current_url
-            page_title = driver.title
-            if '/sorry' in current_url or 'consent.google' in current_url:
-                logger.error(f"BLOCKED: Google CAPTCHA/consent page for {origin}→{destination}")
-                # Don't retry — wait for next scheduled run
-                return []
-            if '/explore' in current_url:
-                logger.error(f"BLOCKED: Redirected to /explore for {origin}→{destination} {date}")
-                return []
-            if 'unusual traffic' in page_title.lower():
-                logger.error(f"BLOCKED: Unusual traffic detected")
-                return []
-
-            page_source = driver.page_source
-            flights = parse_flight_data(page_source)
-
-            if not flights and attempt < 1:
-                logger.warning(f"No flights found (attempt {attempt + 1}), retrying...")
                 driver.quit()
-                time.sleep(3)
-                continue
+            except Exception:
+                pass
 
-            # Only check booking prices on scheduled notification runs (saves ~60 Google requests)
-            if flights and check_bookings:
-                _enrich_all_bookings(driver, flights)
-            elif flights:
-                logger.info(f"Fast mode: skipping booking checks ({len(flights)} flights)")
 
-            return flights
+def scrape_flights(origin: str, destination: str, date: str, check_bookings: bool = True) -> list:
+    """
+    Uses Selenium to load Google Flights and scrape flight data.
+    check_bookings: if False, skip clicking individual flights for 3rd party prices (fast mode).
 
-        except TimeoutException as exc:
-            logger.error("Page load timed out: %s", exc)
-            if attempt < 1:
-                continue
-            return []
-        except WebDriverException as exc:
-            logger.error("WebDriver error: %s", exc)
-            return []
-        finally:
-            if driver is not None:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
+    Wraps _scrape_flights_once with retry. Returns [] on terminal failure
+    (after all retries exhausted) so callers get a stable interface.
+    """
+    if not SELENIUM_AVAILABLE:
+        logger.error("selenium is not available")
+        return []
 
-    return []
+    try:
+        return _scrape_flights_once(origin, destination, date, check_bookings)
+    except (BlockedError, EmptyResultsError, SanityCheckError) as exc:
+        logger.error(f"Scrape failed for {origin}->{destination} {date}: {type(exc).__name__}: {exc}")
+        return []
+    except (TimeoutException, WebDriverException) as exc:
+        logger.error(f"Scrape failed for {origin}->{destination} {date}: {type(exc).__name__}: {exc}")
+        return []
 
 
 def parse_flight_data(page_source: str) -> list:

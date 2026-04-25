@@ -52,9 +52,17 @@ def init_db(db_path):
                 is_lowest_ever  BOOLEAN,
                 alerted_at      DATETIME
             );
+            CREATE TABLE IF NOT EXISTS alert_events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                alert_type  TEXT NOT NULL,
+                route       TEXT,
+                message     TEXT,
+                sent_at     DATETIME NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_scrape_runs_route_date ON scrape_runs(route, search_date, status);
             CREATE INDEX IF NOT EXISTS idx_flights_run ON flights(scrape_run_id);
             CREATE INDEX IF NOT EXISTS idx_flights_direct ON flights(is_direct, is_excluded_airline, price_thb);
+            CREATE INDEX IF NOT EXISTS idx_alert_events_type_time ON alert_events(alert_type, sent_at);
         """)
 
 
@@ -179,3 +187,40 @@ def insert_price_alert(db_path, scrape_run_id, route, search_date,
             (scrape_run_id, route, search_date, best_price_thb,
              prev_price_thb, is_lowest_ever, datetime.now().isoformat())
         )
+
+
+def get_consecutive_failures(db_path, consecutive=3):
+    """Return routes whose last `consecutive` runs all failed."""
+    with _connect(db_path) as conn:
+        rows = conn.execute("""
+            WITH recent AS (
+                SELECT route, status,
+                       ROW_NUMBER() OVER (PARTITION BY route ORDER BY scraped_at DESC) AS rn
+                FROM scrape_runs
+            )
+            SELECT route FROM recent
+            WHERE rn <= ?
+            GROUP BY route
+            HAVING COUNT(*) = ? AND SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) = ?
+        """, (consecutive, consecutive, consecutive)).fetchall()
+        return [r[0] for r in rows]
+
+
+def insert_alert_event(db_path, alert_type, route=None, message=None):
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO alert_events (alert_type, route, message, sent_at) VALUES (?, ?, ?, ?)",
+            (alert_type, route, message, datetime.now().isoformat())
+        )
+
+
+def recently_alerted(db_path, alert_type, within_hours=6):
+    """True if an alert of this type was sent within the past `within_hours`."""
+    with _connect(db_path) as conn:
+        row = conn.execute("""
+            SELECT 1 FROM alert_events
+            WHERE alert_type = ?
+              AND sent_at >= datetime('now', ?)
+            LIMIT 1
+        """, (alert_type, f'-{within_hours} hours')).fetchone()
+        return row is not None

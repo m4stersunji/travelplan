@@ -114,28 +114,28 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
 def _should_send_notification(route_results, valid_combos):
     """Decide whether to send LINE this run.
 
-    Send if:
-    1. Current hour is divisible by NOTIFY_EVERY_HOURS (scheduled)
-    2. OR any roundtrip price dropped below PRICE_ALERT_THRESHOLD (urgent)
+    Returns (should_send, is_price_alert).
+    - is_price_alert=True means urgent (price dropped below threshold) — bypasses quota soft-block
+    - is_price_alert=False means scheduled — subject to quota soft-block
     """
     from flight_utils import best_price, eligible_flights, find_best_combos
 
-    # Check schedule
-    current_hour = datetime.now().hour
-    if current_hour % NOTIFY_EVERY_HOURS == 0:
-        logger.info(f"Scheduled notification (hour {current_hour}, every {NOTIFY_EVERY_HOURS}h)")
-        return True
-
-    # Check price alert
+    # Check price alert FIRST so urgent sends are flagged correctly even at scheduled hours
     if PRICE_ALERT_THRESHOLD > 0:
         outbound = [r for r in route_results if r.get('score_mode') == 'departure']
         inbound = [r for r in route_results if r.get('score_mode') == 'arrival']
         combos = find_best_combos(outbound, inbound, valid_combos)
         if combos and combos[0]['total'] < PRICE_ALERT_THRESHOLD:
             logger.info(f"PRICE ALERT! ฿{combos[0]['total']:,} < threshold ฿{PRICE_ALERT_THRESHOLD:,}")
-            return True
+            return True, True
 
-    return False
+    # Check schedule
+    current_hour = datetime.now().hour
+    if current_hour % NOTIFY_EVERY_HOURS == 0:
+        logger.info(f"Scheduled notification (hour {current_hour}, every {NOTIFY_EVERY_HOURS}h)")
+        return True, False
+
+    return False, False
 
 
 def main():
@@ -210,17 +210,25 @@ def main():
     # Send LINE notification — only every N hours OR if price drops below alert threshold
     successful = [r for r in route_results if r['success']]
     if successful:
-        should_notify = _should_send_notification(successful, current_combos)
+        should_notify, is_price_alert = _should_send_notification(successful, current_combos)
         if should_notify:
-            flex = build_flex_message(successful, current_combos)
-            if not send_line_flex(flex):
-                logger.warning("Flex message failed, falling back to text")
-                message = format_combined_message(successful)
-                send_line_notification(message)
+            from health import should_skip_for_quota
+            if should_skip_for_quota(is_price_alert):
+                logger.info("LINE quota near limit — skipping scheduled send (price alerts still go through)")
+            else:
+                flex = build_flex_message(successful, current_combos)
+                if not send_line_flex(flex):
+                    logger.warning("Flex message failed, falling back to text")
+                    message = format_combined_message(successful)
+                    send_line_notification(message)
         else:
             logger.info("Skipping LINE (not scheduled this hour, no price alert)")
     else:
         logger.warning("No successful scrapes — skipping notification")
+
+    # Heartbeat check — alert if any route has 3 consecutive failures
+    from health import run_heartbeat_check
+    run_heartbeat_check(DB_PATH, consecutive=3)
 
     # Push to Google Sheets
     if successful:
