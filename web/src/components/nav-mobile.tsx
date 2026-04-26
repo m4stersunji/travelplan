@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Settings } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 const ITEMS = [
   { to: "/", label: "Home", icon: Home },
