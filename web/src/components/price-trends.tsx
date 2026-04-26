@@ -1,109 +1,105 @@
 "use client";
-
-import { useEffect, useState } from "react";
+/**
+ * PriceTrends — dropdown to pick route+date, then full Recharts line chart.
+ */
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api-client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PriceTrendChart } from "@/components/price-trend-chart";
 
-type Row = Record<string, string>;
+interface RoutePick {
+  route: string;
+  isoDate: string;
+  label: string;
+}
+
+const MONTH_NAME_TO_NUM: Record<string, string> = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+};
+
+function shortDateToIso(label: string): string {
+  const [day, mon] = label.split(" ");
+  if (!day || !mon) return label;
+  const month = MONTH_NAME_TO_NUM[mon] || "01";
+  const year = new Date().getFullYear();
+  return `${year}-${month}-${day.padStart(2, "0")}`;
+}
 
 export default function PriceTrends() {
-  const [history, setHistory] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
+  const overviewQ = useQuery({ queryKey: ["overview"], queryFn: api.getOverview });
 
-  useEffect(() => {
-    fetch("/api/sheets?tab=Price History")
-      .then((r) => r.json())
-      .then((data) => {
-        setHistory(Array.isArray(data) ? data : []);
-        setLoading(false);
-      });
-  }, []);
+  const picks: RoutePick[] = useMemo(() => {
+    const list = overviewQ.data || [];
+    return list.map((r) => ({
+      route: r.route,
+      isoDate: shortDateToIso(r.date),
+      label: `${r.route} ${r.date}`,
+    }));
+  }, [overviewQ.data]);
 
-  if (loading) return <div className="text-center py-12 text-muted-foreground">Loading...</div>;
-  if (history.length < 2) {
+  const [pickKey, setPickKey] = useState<string>("");
+  const current = picks.find((p) => `${p.route}|${p.isoDate}` === pickKey) || picks[0];
+
+  const trendQ = useQuery({
+    queryKey: ["trend", current?.route, current?.isoDate, 30],
+    queryFn: () =>
+      current
+        ? api.getTrend(current.route, current.isoDate, 30)
+        : Promise.resolve([]),
+    enabled: !!current,
+  });
+
+  if (overviewQ.isLoading) {
+    return <div className="h-72 rounded-xl border bg-muted/30 animate-pulse" />;
+  }
+  if (!picks.length) {
     return (
-      <Card>
-        <CardContent className="pt-6 text-center text-muted-foreground">
-          Need 2+ data points for trends. Check back after the next scrape run.
-        </CardContent>
-      </Card>
+      <p className="text-sm text-muted-foreground text-center py-12">
+        No trips yet — add one in the Trips tab.
+      </p>
     );
   }
 
-  const headers = Object.keys(history[0]);
-  const priceColumns = headers.filter((h) => h !== "Checked At");
-
-  // Simple trend indicator
-  const getTrend = (col: string) => {
-    const values = history.map((r) => Number(r[col])).filter((v) => !isNaN(v) && v > 0);
-    if (values.length < 2) return { icon: "—", color: "text-muted-foreground" };
-    const latest = values[values.length - 1];
-    const prev = values[values.length - 2];
-    if (latest < prev) return { icon: "↓", color: "text-green-600" };
-    if (latest > prev) return { icon: "↑", color: "text-red-500" };
-    return { icon: "→", color: "text-muted-foreground" };
-  };
-
   return (
-    <div className="space-y-6">
-      {/* Trend summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {priceColumns.filter((c) => c.includes("(Best)")).map((col) => {
-          const values = history.map((r) => Number(r[col])).filter((v) => !isNaN(v) && v > 0);
-          const latest = values[values.length - 1] || 0;
-          const lowest = Math.min(...values.filter((v) => v > 0));
-          const trend = getTrend(col);
-          const label = col.replace(" (Best)", "");
+    <div className="space-y-4">
+      <Select
+        value={pickKey || `${picks[0]!.route}|${picks[0]!.isoDate}`}
+        onValueChange={(v) => setPickKey(v ?? "")}
+      >
+        <SelectTrigger className="max-w-xs">
+          <SelectValue placeholder="Pick a route" />
+        </SelectTrigger>
+        <SelectContent>
+          {picks.map((p) => (
+            <SelectItem
+              key={`${p.route}|${p.isoDate}`}
+              value={`${p.route}|${p.isoDate}`}
+            >
+              {p.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
-          return (
-            <Card key={col}>
-              <CardContent className="pt-4 pb-3">
-                <p className="text-xs text-muted-foreground truncate">{label}</p>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-xl font-bold">฿{latest.toLocaleString()}</span>
-                  <span className={`text-sm font-bold ${trend.color}`}>{trend.icon}</span>
-                </div>
-                <p className="text-xs text-muted-foreground">Low: ฿{lowest.toLocaleString()}</p>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Price history table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Price History</CardTitle>
+          <CardTitle className="text-base">{current?.label}</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {headers.map((h) => (
-                    <TableHead key={h} className="text-xs whitespace-nowrap">
-                      {h === "Checked At" ? "Time" : h.replace("BKK-DAD ", "").replace("DAD-BKK ", "")}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {[...history].reverse().map((row, i) => (
-                  <TableRow key={i}>
-                    {headers.map((h) => (
-                      <TableCell key={h} className="text-xs whitespace-nowrap">
-                        {h === "Checked At"
-                          ? row[h]
-                          : row[h] && !isNaN(Number(row[h]))
-                            ? `฿${Number(row[h]).toLocaleString()}`
-                            : row[h] || "-"}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          {trendQ.isLoading ? (
+            <div className="h-60 rounded bg-muted/30 animate-pulse" />
+          ) : (
+            <PriceTrendChart data={trendQ.data || []} height={280} />
+          )}
         </CardContent>
       </Card>
     </div>

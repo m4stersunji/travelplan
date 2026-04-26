@@ -13,6 +13,17 @@ import type {
   TripConfig,
 } from "./adapter";
 
+const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function isoToShortDate(iso: string): string {
+  // "2026-05-29" -> "29 May"
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  const day = String(parseInt(m[2]!, 10) > 0 ? parseInt(m[3]!, 10) : 0).padStart(2, "0");
+  const monthIdx = parseInt(m[2]!, 10) - 1;
+  return `${day} ${MONTH_ABBR[monthIdx] || ""}`.trim();
+}
+
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SHEETS_BASE = "https://sheets.googleapis.com/v4/spreadsheets";
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -158,22 +169,29 @@ export class SheetsDataSource implements FlightDataSource {
   }
 
   async getTrend(route: string, date: string, days = 30): Promise<PriceHistoryPoint[]> {
+    // Price History is wide-format: rows = timestamps, cols = "{route} {dateLabel} (Best)"
+    // dateLabel example: "29 May" from ISO "2026-05-29"
     const rows = await this.readRows("Price History");
-    return rows
-      .filter((r) => r.Route === route && (r["Search Date"] === date || r.Date === date))
-      .map((r) => ({
-        scrapedAt: r["Scraped At"] ?? "",
-        bestPrice: Number(r["Best Price"] || r.Price || 0),
-        airline: r.Airline || undefined,
-      }))
-      .sort((a, b) => a.scrapedAt.localeCompare(b.scrapedAt))
-      .slice(-days * 24);
+    const dateLabel = isoToShortDate(date);
+    const colBest = `${route} ${dateLabel} (Best)`;
+    const colAirline = `${route} ${dateLabel} (Airline)`;
+    const points: PriceHistoryPoint[] = [];
+    for (const r of rows) {
+      const ts = r["Checked At"] ?? "";
+      const bestVal = r[colBest];
+      const airlineVal = r[colAirline];
+      const price = Number(bestVal || airlineVal || 0);
+      if (!ts || !price) continue;
+      points.push({ scrapedAt: ts, bestPrice: price });
+    }
+    points.sort((a, b) => a.scrapedAt.localeCompare(b.scrapedAt));
+    return points.slice(-days * 24);
   }
 
   async getTrips(): Promise<TripConfig[]> {
     const rows = await this.readRows("Config");
     return rows
-      .filter((r) => r["Trip Name"])
+      .filter((r) => r["Trip Name"] && r.From && r.To && r["Go Date"])
       .map((r) => ({
         tripName: r["Trip Name"] ?? "",
         from: r.From ?? "",
