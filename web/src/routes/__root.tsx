@@ -1,6 +1,7 @@
 import { Outlet, createRootRoute } from "@tanstack/react-router";
 import { NavDesktop } from "@/components/nav-desktop";
 import { NavMobile } from "@/components/nav-mobile";
+import { SWRegister } from "@/components/sw-register";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -14,6 +15,7 @@ function RootLayout() {
         <Outlet />
       </main>
       <NavMobile />
+      <SWRegister />
     </div>
   );
 }
