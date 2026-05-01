@@ -4,7 +4,7 @@ import sys
 from datetime import datetime
 
 from config import SEARCH_ROUTES, VALID_COMBOS, EXCLUDED_AIRLINES, DB_PATH, DATA_DIR, LOG_DIR, TOP_N_FLIGHTS, SCRAPER_EXPIRY_DATE, NOTIFY_EVERY_HOURS, PRICE_ALERT_THRESHOLD
-from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history, get_average_price
+from database import init_db, insert_scrape_run, insert_flight, get_previous_best_price, get_lowest_ever_price, get_scrape_count, insert_price_alert, get_price_history, get_average_price, recently_alerted, insert_alert_event
 from scraper import scrape_flights, classify_flight, score_flights
 from notifier import send_line_notification, send_line_flex, build_flex_message, format_combined_message
 from exporter import export_flights_to_csv
@@ -111,16 +111,18 @@ def process_route(origin, destination, date, label, route_code, db_path, data_di
     }
 
 
-def _should_send_notification(route_results, valid_combos):
+def _should_send_notification(route_results, valid_combos, db_path):
     """Decide whether to send LINE this run.
 
     Returns (should_send, is_price_alert).
     - is_price_alert=True means urgent (price dropped below threshold) — bypasses quota soft-block
     - is_price_alert=False means scheduled — subject to quota soft-block
-    """
-    from flight_utils import best_price, eligible_flights, find_best_combos
 
-    # Check price alert FIRST so urgent sends are flagged correctly even at scheduled hours
+    Scheduling uses elapsed time since the last recorded scheduled_flex event,
+    not wall-clock hour matching — robust against GitHub Actions cron delays.
+    """
+    from flight_utils import find_best_combos
+
     if PRICE_ALERT_THRESHOLD > 0:
         outbound = [r for r in route_results if r.get('score_mode') == 'departure']
         inbound = [r for r in route_results if r.get('score_mode') == 'arrival']
@@ -129,13 +131,11 @@ def _should_send_notification(route_results, valid_combos):
             logger.info(f"PRICE ALERT! ฿{combos[0]['total']:,} < threshold ฿{PRICE_ALERT_THRESHOLD:,}")
             return True, True
 
-    # Check schedule
-    current_hour = datetime.now().hour
-    if current_hour % NOTIFY_EVERY_HOURS == 0:
-        logger.info(f"Scheduled notification (hour {current_hour}, every {NOTIFY_EVERY_HOURS}h)")
-        return True, False
+    if recently_alerted(db_path, 'scheduled_flex', within_hours=NOTIFY_EVERY_HOURS):
+        return False, False
 
-    return False, False
+    logger.info(f"Scheduled notification (interval {NOTIFY_EVERY_HOURS}h elapsed)")
+    return True, False
 
 
 def main():
@@ -179,9 +179,10 @@ def main():
         active_routes = SEARCH_ROUTES
         logger.info(f"Using {len(active_routes)} routes from config.py (Sheet config not available)")
 
-    # Determine if this is a notification run (check bookings) or fast run (prices only)
-    current_hour = datetime.now().hour
-    is_notify_run = current_hour % NOTIFY_EVERY_HOURS == 0
+    # Determine if this is a notification run (check bookings) or fast run (prices only).
+    # Mirrors the gate in _should_send_notification — booking checks are expensive, so only
+    # run them when we actually expect to send a flex this run.
+    is_notify_run = not recently_alerted(DB_PATH, 'scheduled_flex', within_hours=NOTIFY_EVERY_HOURS)
     mode = "FULL (with bookings)" if is_notify_run else "FAST (prices only)"
     logger.info(f"Mode: {mode}")
 
@@ -210,19 +211,22 @@ def main():
     # Send LINE notification — only every N hours OR if price drops below alert threshold
     successful = [r for r in route_results if r['success']]
     if successful:
-        should_notify, is_price_alert = _should_send_notification(successful, current_combos)
+        should_notify, is_price_alert = _should_send_notification(successful, current_combos, DB_PATH)
         if should_notify:
             from health import should_skip_for_quota
             if should_skip_for_quota(is_price_alert):
                 logger.info("LINE quota near limit — skipping scheduled send (price alerts still go through)")
             else:
                 flex = build_flex_message(successful, current_combos)
-                if not send_line_flex(flex):
+                sent = send_line_flex(flex)
+                if not sent:
                     logger.warning("Flex message failed, falling back to text")
                     message = format_combined_message(successful)
-                    send_line_notification(message)
+                    sent = send_line_notification(message)
+                if sent and not is_price_alert:
+                    insert_alert_event(DB_PATH, 'scheduled_flex')
         else:
-            logger.info("Skipping LINE (not scheduled this hour, no price alert)")
+            logger.info("Skipping LINE (sent within last interval, no price alert)")
     else:
         logger.warning("No successful scrapes — skipping notification")
 

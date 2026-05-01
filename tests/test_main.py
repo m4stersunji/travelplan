@@ -54,3 +54,61 @@ def test_process_route_scraper_fails():
             )
 
             assert result['success'] is False
+
+
+def _stub_results():
+    return [{
+        'success': True,
+        'flights': [],
+        'route_code': 'BKK-KIX',
+        'search_date': '2026-10-17',
+        'date_label': '17 Oct',
+        'score_mode': 'departure',
+    }]
+
+
+def test_should_send_when_no_prior_notification():
+    """Fresh DB: scheduled-flex throttle empty → should send."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, 'test.db')
+        from database import init_db
+        init_db(db_path)
+
+        from main import _should_send_notification
+        should_send, is_alert = _should_send_notification(_stub_results(), [], db_path)
+        assert should_send is True
+        assert is_alert is False
+
+
+def test_should_skip_if_recently_notified():
+    """Scheduled flex sent within window → skip regardless of clock hour."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, 'test.db')
+        from database import init_db, insert_alert_event
+        init_db(db_path)
+        insert_alert_event(db_path, 'scheduled_flex', message='prior')
+
+        from main import _should_send_notification
+        should_send, is_alert = _should_send_notification(_stub_results(), [], db_path)
+        assert should_send is False
+        assert is_alert is False
+
+
+def test_should_send_after_window_elapsed():
+    """Last scheduled flex older than NOTIFY_EVERY_HOURS → send again."""
+    import sqlite3
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, 'test.db')
+        from database import init_db
+        init_db(db_path)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO alert_events (alert_type, sent_at) "
+                "VALUES (?, datetime('now', '-12 hours'))",
+                ('scheduled_flex',),
+            )
+
+        from main import _should_send_notification
+        should_send, is_alert = _should_send_notification(_stub_results(), [], db_path)
+        assert should_send is True
+        assert is_alert is False
