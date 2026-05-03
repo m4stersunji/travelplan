@@ -77,7 +77,20 @@
       "Bash(curl -sS -o /dev/null -w \"homepage HTTP %{http_code}\\\\n\" \"https://travelplan.nattawatsun01.workers.dev/\")",
       "Bash(curl -sS -o /tmp/dbg.html -w \"debug-creds HTTP %{http_code} | size %{size_download}B\\\\n\" \"https://travelplan.nattawatsun01.workers.dev/api/debug-creds\")",
       "Bash(npx wrangler *)",
-      "Bash(curl -s https://travelplan.nattawatsun01.workers.dev/api/debug-creds)"
+      "Bash(curl -s https://travelplan.nattawatsun01.workers.dev/api/debug-creds)",
+      "Bash(curl -sS -o /dev/null -w 'HTTP %{http_code} | %{size_download}B | %{time_total}s' https://travelplan.nattawatsun01.workers.dev/)",
+      "Bash(curl -sS -o /dev/null -w 'HTTP %{http_code}' https://travelplan.nattawatsun01.workers.dev/trip/BKK-DAD-2026-05-29)",
+      "Bash(curl -sS -o /dev/null -w 'HTTP %{http_code}' https://travelplan.nattawatsun01.workers.dev/manifest.webmanifest)",
+      "Bash(curl -sS https://travelplan-api.nattawatsun01.workers.dev/overview)",
+      "Bash(git fetch *)",
+      "Bash(xargs -I{} echo \"Will set remote to: {}\")",
+      "Bash(apt list *)",
+      "Bash(curl -s https://api.github.com/repos/cli/cli/releases/latest)",
+      "Read(//tmp/**)",
+      "Bash(curl -sL https://github.com/cli/cli/releases/download/v2.92.0/gh_2.92.0_linux_amd64.tar.gz -o gh.tar.gz)",
+      "Bash(tar xzf *)",
+      "Bash(mkdir -p ~/.local/bin)",
+      "Bash(mv gh_2.92.0_linux_amd64/bin/gh ~/.local/bin/)"
     ]
   }
 }

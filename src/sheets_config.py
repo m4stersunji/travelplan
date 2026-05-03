@@ -186,23 +186,7 @@ def load_routes_from_sheet():
         return None, None
 
 
-CITY_CODES = {
-    'bangkok': 'BKK',
-    'danang': 'DAD',
-    'da nang': 'DAD',
-    'tokyo': 'TYO',
-    'osaka': 'KIX',
-    'seoul': 'ICN',
-    'singapore': 'SIN',
-    'hong kong': 'HKG',
-    'taipei': 'TPE',
-    'kuala lumpur': 'KUL',
-    'ho chi minh': 'SGN',
-    'hanoi': 'HAN',
-    'bali': 'DPS',
-    'phuket': 'HKT',
-    'chiang mai': 'CNX',
-}
+# CITY_CODES moved to flight_utils — single source of truth, also used by scraper URL builder.
 
 
 def write_config_status(statuses):
@@ -233,10 +217,6 @@ def _parse_time_pref(time_str, default=12.0):
 
 
 def _city_to_code(city_name):
-    """Convert city name to 3-letter code."""
-    name_lower = city_name.lower().strip()
-    for city, code in CITY_CODES.items():
-        if city in name_lower:
-            return code
-    # Fallback: first 3 uppercase chars
-    return city_name[:3].upper()
+    """Convert city name to 3-letter code. Delegates to the shared helper."""
+    from flight_utils import city_to_iata
+    return city_to_iata(city_name)

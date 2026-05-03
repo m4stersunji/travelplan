@@ -33,11 +33,16 @@ logger = logging.getLogger(__name__)
 
 
 def build_google_flights_url(origin: str, destination: str, date: str) -> str:
-    """Returns a Google Flights URL for the given origin, destination, and date."""
-    # Use ISO date format (YYYY-MM-DD) — works for all days including weekends
+    """Returns a Google Flights URL for the given origin, destination, and date.
+
+    Origin/destination are converted to IATA codes — Google Flights stopped
+    recognizing some city names (e.g. 'Danang' redirects to /travel/explore as
+    of 2026-05-01) but accepts every IATA airport/city code.
+    """
+    from flight_utils import city_to_iata
     return (
         f"https://www.google.com/travel/flights"
-        f"?q={origin}+to+{destination}+{date}+one+way"
+        f"?q={city_to_iata(origin)}+to+{city_to_iata(destination)}+{date}+one+way"
         f"&curr=THB&hl=en"
     )
 

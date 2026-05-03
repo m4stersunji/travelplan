@@ -6,6 +6,45 @@ Single source of truth for verdict, trend, pricing, and scoring logic.
 from datetime import datetime, date
 
 
+CITY_CODES = {
+    'bangkok': 'BKK',
+    'danang': 'DAD',
+    'da nang': 'DAD',
+    'tokyo': 'TYO',
+    'osaka': 'KIX',
+    'seoul': 'ICN',
+    'singapore': 'SIN',
+    'hong kong': 'HKG',
+    'taipei': 'TPE',
+    'kuala lumpur': 'KUL',
+    'ho chi minh': 'SGN',
+    'hanoi': 'HAN',
+    'bali': 'DPS',
+    'phuket': 'HKT',
+    'chiang mai': 'CNX',
+}
+
+
+def city_to_iata(city_name):
+    """Convert a city name (or already-IATA code) to a 3-letter IATA code.
+
+    Google Flights' URL parser stopped recognizing some city names (e.g. 'Danang'
+    started redirecting to /travel/explore on 2026-05-01), so the URL builder
+    and route-code helpers funnel through this function. Already-uppercase
+    3-letter inputs pass through unchanged so 'BKK' stays 'BKK'.
+    """
+    if not city_name:
+        return ''
+    name = city_name.strip()
+    if len(name) == 3 and name.isupper():
+        return name
+    name_lower = name.lower()
+    for city, code in CITY_CODES.items():
+        if city in name_lower:
+            return code
+    return name[:3].upper()
+
+
 def best_price(flight):
     """Get cheapest available price (3rd party or airline direct)."""
     bp = flight.get('best_booking_price')
