@@ -69,6 +69,28 @@ def test_get_previous_best_price_no_history():
         os.unlink(db_path)
 
 
+def test_recently_alerted_returns_false_for_expired_iso_T_entry():
+    """Regression: insert_alert_event stores sent_at via datetime.isoformat() (with 'T'),
+    but SQLite's datetime('now', '-Nh') uses a space separator. A naive string compare
+    treats same-day 'T' entries as newer than space-separated thresholds (T > space in
+    ASCII), so 8h-old entries falsely look 'within 6h' until UTC midnight rolls over.
+    Reproduces the prod silence on 2026-05-02 after the elapsed-time gate shipped."""
+    from datetime import datetime, timedelta, timezone
+    from database import recently_alerted
+    db_path = make_temp_db()
+    try:
+        init_db(db_path)
+        eight_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO alert_events (alert_type, sent_at) VALUES (?, ?)",
+                ('scheduled_flex', eight_hours_ago),
+            )
+        assert recently_alerted(db_path, 'scheduled_flex', within_hours=6) is False
+    finally:
+        os.unlink(db_path)
+
+
 def test_get_lowest_ever_price():
     db_path = make_temp_db()
     try:

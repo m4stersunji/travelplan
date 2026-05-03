@@ -207,20 +207,32 @@ def get_consecutive_failures(db_path, consecutive=3):
 
 
 def insert_alert_event(db_path, alert_type, route=None, message=None):
+    """Records a fired alert. sent_at is stored as UTC ISO so it can be compared
+    against SQLite datetime('now', ...) (which is also UTC) without a TZ skew.
+    Other tables in this module store local time for human-readable display;
+    only alert_events participates in time-arithmetic queries."""
+    from datetime import timezone
     with _connect(db_path) as conn:
         conn.execute(
             "INSERT INTO alert_events (alert_type, route, message, sent_at) VALUES (?, ?, ?, ?)",
-            (alert_type, route, message, datetime.now().isoformat())
+            (alert_type, route, message, datetime.now(timezone.utc).isoformat())
         )
 
 
 def recently_alerted(db_path, alert_type, within_hours=6):
-    """True if an alert of this type was sent within the past `within_hours`."""
+    """True if an alert of this type was sent within the past `within_hours`.
+
+    sent_at is stored as datetime.isoformat() ('YYYY-MM-DDTHH:MM:SS.ffffff'),
+    but datetime('now', ...) returns space-separated text. Wrap sent_at in
+    datetime() so SQLite parses both as time values and compares numerically;
+    a raw string compare treats 'T' (0x54) > ' ' (0x20) and falsely marks
+    same-day entries as recent until UTC midnight.
+    """
     with _connect(db_path) as conn:
         row = conn.execute("""
             SELECT 1 FROM alert_events
             WHERE alert_type = ?
-              AND sent_at >= datetime('now', ?)
+              AND datetime(sent_at) >= datetime('now', ?)
             LIMIT 1
         """, (alert_type, f'-{within_hours} hours')).fetchone()
         return row is not None
