@@ -20,7 +20,7 @@ TOP_N_FLIGHTS = 20
 
 # Auto-stop: scraper won't run after this date (1 month from now or set manually)
 # Format: YYYY-MM-DD or empty string to disable
-SCRAPER_EXPIRY_DATE = os.getenv('SCRAPER_EXPIRY_DATE', '2026-05-05')
+SCRAPER_EXPIRY_DATE = os.getenv('SCRAPER_EXPIRY_DATE', '2026-12-31')
 
 # Notification frequency: send LINE only every N hours (scrape runs every hour)
 NOTIFY_EVERY_HOURS = int(os.getenv('NOTIFY_EVERY_HOURS', '6'))
