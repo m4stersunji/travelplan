@@ -1,0 +1,49 @@
+name: Heartbeat
+
+# Checks the actual DATA freshness in flights.db, not just workflow status.
+# The 12-day silence on 2026-05-05..17 had every workflow run reporting green
+# because the expiry kill-switch returned exit 0 — no data was scraped but CI
+# said "success". This workflow inspects scrape_runs.scraped_at and pings LINE
+# when no successful scrape has landed in the last STALE_THRESHOLD_HOURS hours.
+
+on:
+  schedule:
+    - cron: '37 */6 * * *'  # offset from flight-tracker's :17 to avoid overlap
+  workflow_dispatch:
+
+jobs:
+  freshness-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check last successful scrape age
+        env:
+          LINE_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          STALE_THRESHOLD_HOURS: '8'
+        run: |
+          # scraped_at is stored as ISO with 'T' separator. datetime() coerces
+          # both sides to comparable timestamps. Same UTC convention as the
+          # alert_events fix in src/database.py:222-238.
+          STALE_HOURS=$(sqlite3 data/flights.db "
+            SELECT CAST((julianday('now') - julianday(MAX(scraped_at))) * 24 AS INTEGER)
+            FROM scrape_runs WHERE status='success'
+          ")
+          echo "Hours since last successful scrape: ${STALE_HOURS:-NULL}"
+
+          if [ -z "$STALE_HOURS" ] || [ "$STALE_HOURS" = "NULL" ]; then
+            MSG="Flight tracker heartbeat: no successful scrape ever recorded"
+          elif [ "$STALE_HOURS" -gt "$STALE_THRESHOLD_HOURS" ]; then
+            MSG="Flight tracker silent for ${STALE_HOURS}h (threshold ${STALE_THRESHOLD_HOURS}h) — check GA"
+          else
+            echo "Within threshold, no alert needed"
+            exit 0
+          fi
+
+          echo "Sending LINE alert: $MSG"
+          curl -s -X POST https://api.line.me/v2/bot/message/push \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"to\":\"$LINE_USER_ID\",\"messages\":[{\"type\":\"text\",\"text\":\"$MSG\"}]}"
